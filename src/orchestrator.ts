@@ -6,6 +6,9 @@ import { runCritic } from "./agents/critic.js";
 import { runPlanner } from "./agents/planner.js";
 import { runResearchTask } from "./agents/researcher.js";
 import { runWriter } from "./agents/writer.js";
+import { OpenCodeWebSearchProvider } from "./search/opencode-websearch.js";
+import type { SearchProvider } from "./search/search-provider.js";
+import { isXiaomiNativeWebSearchDisabled, XiaomiNativeWebSearchProvider } from "./search/xiaomi-native-websearch.js";
 import { EventLogger } from "./store/events.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
@@ -16,6 +19,7 @@ export type RunResult = {
   runDir: string;
   reportPath: string;
   focus: string;
+  searchProvider: string;
   usage: UsageSummary;
   lintOk: boolean;
 };
@@ -29,9 +33,11 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     runId: config.runId,
     profile: config.profile.name,
     focus: config.focus,
+    searchProvider: config.searchProvider,
     model: config.model,
     dryRun: config.dryRun
   });
+  await events.log("search_provider_selected", { provider: config.searchProvider });
   await writeTextArtifact(config.runDir, "input.md", config.prompt);
   await writeJsonArtifact(config.runDir, "config.json", sanitizeConfig(config));
 
@@ -60,6 +66,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
   });
 
   let sources = dedupeSources(findings, config.focus);
+  await logDedupedSources(events, findings, sources);
   let evidence = buildEvidence(findings, sources);
   await writeJsonArtifact(config.runDir, "sources.json", sources);
   await writeJsonArtifact(config.runDir, "evidence.json", evidence);
@@ -88,6 +95,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     const gapFindings = await runResearchTasks({ config, apiKey, tasks: capped, usage, events });
     findings.push(...gapFindings);
     sources = dedupeSources(findings, config.focus);
+    await logDedupedSources(events, findings, sources);
     evidence = buildEvidence(findings, sources);
     await writeJsonArtifact(config.runDir, "sources.json", sources);
     await writeJsonArtifact(config.runDir, "evidence.json", evidence);
@@ -149,6 +157,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     runDir: config.runDir,
     reportPath: path.join(config.runDir, "report.md"),
     focus: config.focus,
+    searchProvider: config.searchProvider,
     usage: finalUsage,
     lintOk: lint.ok
   };
@@ -162,8 +171,12 @@ async function runResearchTasks(params: {
   events: EventLogger;
 }): Promise<Finding[]> {
   const findings: Finding[] = [];
+  const searchProvider = createSearchProvider(params.config, params.apiKey);
   await runWithConcurrency(params.tasks, params.config.concurrency, async (task) => {
     await params.events.log("researcher_task_started", { taskId: task.id, query: task.query });
+    if (params.config.searchProvider === "opencode-web") {
+      await params.events.log("opencode_search_started", { taskId: task.id, query: task.query });
+    }
     const finding = await runResearchTask({
       apiKey: params.apiKey,
       baseUrl: params.config.apiBaseUrl,
@@ -171,13 +184,34 @@ async function runResearchTasks(params: {
       maxCompletionTokens: params.config.maxOutputTokens.researcher,
       profile: params.config.profile,
       task,
+      searchProvider,
       dryRun: params.config.dryRun
     });
     if (finding.error) {
       params.usage.addError();
       await params.events.log("error", { phase: "researcher", taskId: task.id, error: finding.error });
+      if (params.config.searchProvider === "opencode-web") {
+        await params.events.log("opencode_search_failed", { taskId: task.id, error: finding.error });
+      }
+      if (isXiaomiNativeWebSearchDisabled(finding.error)) {
+        await params.events.log("xiaomi_native_websearch_disabled", { taskId: task.id });
+      }
     }
-    params.usage.addCall("researcher", finding.usage);
+    if (finding.usage) {
+      params.usage.addCall("researcher", finding.usage);
+    }
+    if (finding.providerResult?.provider === "opencode-web") {
+      params.usage.addOpenCodeUsage(finding.providerResult.usage);
+      for (const warning of finding.providerResult.warnings ?? []) {
+        await params.events.log("opencode_event_parse_warning", { taskId: task.id, warning });
+      }
+      await params.events.log("opencode_search_completed", {
+        taskId: task.id,
+        sources: finding.providerResult.sources.length,
+        rawEventsCount: finding.providerResult.rawEventsCount
+      });
+    }
+    params.usage.addRawSources(finding.annotations.length);
     await writeFinding(params.config.runDir, task.id, finding);
     for (const annotation of finding.annotations) {
       await params.events.log("source_added", { taskId: task.id, canonicalUrl: annotation.canonicalUrl });
@@ -191,6 +225,13 @@ async function runResearchTasks(params: {
     findings.push(finding);
   });
   return findings.sort((a, b) => a.taskId.localeCompare(b.taskId));
+}
+
+function createSearchProvider(config: RunConfig, apiKey: string): SearchProvider {
+  if (config.searchProvider === "xiaomi-native") {
+    return new XiaomiNativeWebSearchProvider({ apiKey, baseUrl: config.apiBaseUrl });
+  }
+  return new OpenCodeWebSearchProvider();
 }
 
 function buildEvidence(findings: Finding[], sources: Source[]): EvidenceFile {
@@ -217,6 +258,14 @@ function buildEvidence(findings: Finding[], sources: Source[]): EvidenceFile {
     sourceCount: sources.length,
     rawAnnotationCount
   };
+}
+
+async function logDedupedSources(events: EventLogger, findings: Finding[], sources: Source[]): Promise<void> {
+  const raw = findings.reduce((sum, finding) => sum + finding.annotations.length, 0);
+  const deduplicated = Math.max(0, raw - sources.length);
+  if (deduplicated > 0) {
+    await events.log("source_deduplicated", { rawSources: raw, uniqueSources: sources.length, deduplicated });
+  }
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {

@@ -4,7 +4,7 @@
   "description": "Local research orchestration CLI powered by Xiaomi MiMo Web Search.",
   "type": "module",
   "bin": {
-    "research-xm": "./dist/cli.js"
+    "research-xm": "./dist/src/cli.js"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",

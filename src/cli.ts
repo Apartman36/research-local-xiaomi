@@ -14,7 +14,8 @@ const program = new Command();
 program
   .name("research-xm")
   .description("Local research orchestration CLI powered by Xiaomi MiMo Web Search.")
-  .version("0.1.0");
+  .version("0.1.0")
+  .addHelpText("after", "\nRun option: --search-provider <opencode-web|xiaomi-native> defaults to opencode-web.");
 
 program
   .command("run")
@@ -24,6 +25,7 @@ program
   .option("--profile <normal100|deep500>", "research profile", "normal100")
   .option("--model <model>", "model for all roles", DEFAULT_MODEL)
   .option("--focus <web|github>", "research focus mode", "web")
+  .option("--search-provider <opencode-web|xiaomi-native>", "search provider", "opencode-web")
   .option("--output-dir <path>", "run output root directory", "./runs")
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
   .option("--concurrency <number>", "max concurrent researcher calls", "3")
@@ -37,6 +39,7 @@ program
         profile: options.profile as "normal100" | "deep500" | undefined,
         model: options.model as string | undefined,
         focus: options.focus as "web" | "github" | undefined,
+        searchProvider: options.searchProvider as "opencode-web" | "xiaomi-native" | undefined,
         outputDir: options.outputDir as string | undefined,
         maxOutputTokens: options.maxOutputTokens as string | undefined,
         concurrency: options.concurrency as string | undefined,
@@ -168,6 +171,7 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
   console.log(`Profile: ${result.usage.profile}`);
   console.log(`Model: ${result.usage.model}`);
   console.log(`Focus: ${result.focus}`);
+  console.log(`Search provider: ${result.searchProvider}`);
   console.log(`Unique sources: ${result.usage.uniqueSources}`);
   console.log(`Sources used in report: ${result.usage.sourcesUsedInReport}`);
   console.log(`Total tokens: ${result.usage.total_tokens}`);

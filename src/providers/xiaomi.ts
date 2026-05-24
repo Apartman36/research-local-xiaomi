@@ -76,9 +76,7 @@ async function postChat(params: XiaomiChatParams, extraPayload: Record<string, u
     temperature: params.temperature ?? 1.0,
     top_p: params.topP ?? 0.95,
     stream: false,
-    extra_body: {
-      thinking: { type: "disabled" }
-    },
+    thinking: { type: "disabled" },
     ...extraPayload
   };
 

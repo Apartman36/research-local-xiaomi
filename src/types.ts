@@ -2,6 +2,7 @@ export type ResearchFocus = "web" | "github";
 export type ResearchProfileName = "normal100" | "deep500";
 export type Confidence = "low" | "medium" | "high";
 export type Phase = "planner" | "researcher" | "critic" | "writer" | "smoke";
+export type SearchProviderName = "opencode-web" | "xiaomi-native";
 
 export type ResearchProfile = {
   name: ResearchProfileName;
@@ -34,10 +35,12 @@ export type RunConfig = {
   prompt: string;
   profile: ResearchProfile;
   focus: ResearchFocus;
+  searchProvider: SearchProviderName;
   outputDirRoot: string;
   runDir: string;
   apiBaseUrl: string;
   model: string;
+  opencodeModel: string;
   roleModels: RoleModels;
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
@@ -169,6 +172,31 @@ export type UsageSummary = {
   duration_seconds?: number;
   profile: ResearchProfileName;
   model: string;
+  xiaomi: {
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  opencode: {
+    calls: number;
+    websearch_calls: number;
+    webfetch_calls: number;
+    tokens: {
+      total: number;
+      input: number;
+      output: number;
+      reasoning: number;
+      cache_read: number;
+      cache_write: number;
+    };
+    cost: null;
+  };
+  sources: {
+    raw_sources: number;
+    unique_sources: number;
+    used_in_report: number;
+  };
 };
 
 export type XiaomiMessage = {

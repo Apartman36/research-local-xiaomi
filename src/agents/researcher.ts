@@ -1,22 +1,6 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { z } from "zod";
 import { normalizeUrl } from "../evidence/normalize-url.js";
-import { chatWithWebSearch, extractAnnotations, extractUsage, normalizeXiaomiError } from "../providers/xiaomi.js";
-import type { EvidenceClaim, Finding, ResearchProfile, SearchTask, XiaomiUsage } from "../types.js";
-import { extractJsonObject, getAssistantContent } from "./json.js";
-
-const researcherSchema = z.object({
-  assistantSynthesis: z.string().default(""),
-  claims: z
-    .array(
-      z.object({
-        text: z.string(),
-        confidence: z.enum(["low", "medium", "high"]).default("medium")
-      })
-    )
-    .default([])
-});
+import type { SearchProvider, SearchProviderResult } from "../search/search-provider.js";
+import type { EvidenceClaim, Finding, NormalizedAnnotation, ResearchProfile, SearchTask, XiaomiUsage } from "../types.js";
 
 export async function runResearchTask(params: {
   apiKey: string;
@@ -25,56 +9,39 @@ export async function runResearchTask(params: {
   maxCompletionTokens: number;
   profile: ResearchProfile;
   task: SearchTask;
+  searchProvider: SearchProvider;
   dryRun: boolean;
-}): Promise<Finding> {
+}): Promise<Finding & { providerResult?: SearchProviderResult }> {
   if (params.dryRun) {
-    return dryRunFinding(params.task);
+    return dryRunFinding(params.task, params.searchProvider.name);
   }
 
   try {
-    const system = await readFile(path.resolve("src/prompts/researcher.md"), "utf8");
-    const response = await chatWithWebSearch({
-      apiKey: params.apiKey,
-      baseUrl: params.baseUrl,
-      model: params.model,
-      maxCompletionTokens: params.maxCompletionTokens,
-      maxKeyword: params.profile.maxKeyword,
-      limit: params.profile.limit,
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: JSON.stringify(
-            {
-              task: params.task,
-              instruction: "Run web search and return grounded claims as JSON."
-            },
-            null,
-            2
-          )
-        }
-      ]
+    const providerResult = await params.searchProvider.search({
+      taskId: params.task.id,
+      query: params.task.query,
+      focus: params.task.focus,
+      maxResults: params.profile.limit,
+      model: params.model
     });
-    const content = getAssistantContent(response);
-    const parsed = researcherSchema.parse(extractJsonObject(content));
-    const annotations = extractAnnotations(response);
+    const annotations = providerResult.sources.map(sourceToAnnotation);
     const canonicalUrls = annotations.map((annotation) => normalizeUrl(annotation.url));
-    const claims: EvidenceClaim[] = parsed.claims.map((claim, index) => ({
+    const claims: EvidenceClaim[] = annotations.slice(0, 5).map((annotation, index) => ({
       id: `${params.task.id}-C${String(index + 1).padStart(3, "0")}`,
       subquestionId: params.task.subquestionId,
       taskId: params.task.id,
-      text: claim.text,
-      sourceIds: canonicalUrls,
-      confidence: claim.confidence
+      text: evidenceClaimText(params.task.query, annotation),
+      sourceIds: [canonicalUrls[index] ?? annotation.canonicalUrl],
+      confidence: "medium"
     }));
     return {
       taskId: params.task.id,
       subquestionId: params.task.subquestionId,
       query: params.task.query,
-      assistantSynthesis: parsed.assistantSynthesis || content,
+      assistantSynthesis: synthesizeProviderResult(params.task.query, annotations),
       annotations,
       claims,
-      usage: extractUsage(response)
+      providerResult
     };
   } catch (error) {
     return {
@@ -84,7 +51,7 @@ export async function runResearchTask(params: {
       assistantSynthesis: "",
       annotations: [],
       claims: [],
-      error: normalizeXiaomiError(error)
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -93,8 +60,23 @@ export function findingUsage(finding: Finding): XiaomiUsage | undefined {
   return finding.usage;
 }
 
-function dryRunFinding(task: SearchTask): Finding {
+function dryRunFinding(task: SearchTask, provider: string): Finding & { providerResult: SearchProviderResult } {
   const url = task.focus === "github" ? "https://github.com/example/research-tool" : "https://example.com/research-source";
+  const providerResult: SearchProviderResult = {
+    taskId: task.id,
+    query: task.query,
+    provider: provider === "xiaomi-native" ? "xiaomi-native" : "opencode-web",
+    sources: [
+      {
+        title: "Dry-run source",
+        url,
+        summary: "Synthetic source used only in dry-run mode.",
+        provider: provider === "xiaomi-native" ? "xiaomi-native" : "opencode-web",
+        query: task.query
+      }
+    ],
+    usage: provider === "opencode-web" ? { calls: 0, websearchCalls: 0, webfetchCalls: 0 } : { calls: 0 }
+  };
   return {
     taskId: task.id,
     subquestionId: task.subquestionId,
@@ -118,6 +100,42 @@ function dryRunFinding(task: SearchTask): Finding {
         sourceIds: [normalizeUrl(url)],
         confidence: "low"
       }
-    ]
+    ],
+    providerResult
   };
+}
+
+function sourceToAnnotation(source: SearchProviderResult["sources"][number]): NormalizedAnnotation {
+  return {
+    url: source.url,
+    canonicalUrl: normalizeUrl(source.url),
+    title: source.title,
+    summary: source.summary,
+    siteName: siteNameFromUrl(source.url),
+    publishTime: source.publishedDate
+  };
+}
+
+function synthesizeProviderResult(query: string, annotations: NormalizedAnnotation[]): string {
+  if (annotations.length === 0) {
+    return `No sources were returned for ${query}.`;
+  }
+  return `Found ${annotations.length} source(s) for ${query}: ${annotations
+    .slice(0, 5)
+    .map((annotation) => annotation.title ?? annotation.url)
+    .join("; ")}.`;
+}
+
+function evidenceClaimText(query: string, annotation: NormalizedAnnotation): string {
+  const title = annotation.title ?? annotation.url;
+  const summary = annotation.summary ? ` ${annotation.summary}` : "";
+  return `Source "${title}" provides evidence relevant to "${query}".${summary}`.slice(0, 1200);
+}
+
+function siteNameFromUrl(value: string): string | undefined {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
 }

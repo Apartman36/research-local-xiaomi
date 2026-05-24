@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 import { deep500 } from "./profiles/deep500.js";
 import { normal100 } from "./profiles/normal100.js";
+import { DEFAULT_OPENCODE_MODEL } from "./search/search-provider.js";
 import type { ResearchFocus, ResearchProfile, ResearchProfileName, RoleTokenLimits, RunConfig } from "./types.js";
 
 dotenv.config({ quiet: true });
@@ -22,6 +23,7 @@ const runOptionsSchema = z.object({
   profile: z.enum(["normal100", "deep500"]).default("normal100"),
   model: z.string().default(DEFAULT_MODEL),
   focus: z.enum(["web", "github"]).default("web"),
+  searchProvider: z.enum(["opencode-web", "xiaomi-native"]).default("opencode-web"),
   outputDir: z.string().default("./runs"),
   maxOutputTokens: z.coerce.number().int().positive().optional(),
   concurrency: z.coerce.number().int().positive().default(3),
@@ -68,10 +70,12 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     prompt,
     profile,
     focus: parsed.focus as ResearchFocus,
+    searchProvider: parsed.searchProvider,
     outputDirRoot,
     runDir: path.join(outputDirRoot, runId),
     apiBaseUrl: process.env.XIAOMI_MIMO_BASE_URL ?? DEFAULT_BASE_URL,
     model: parsed.model,
+    opencodeModel: process.env.OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL,
     roleModels: {
       planner: parsed.model,
       researcher: parsed.model,
