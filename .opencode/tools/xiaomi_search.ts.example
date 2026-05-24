@@ -1,0 +1,13 @@
+/**
+ * Future optional OpenCode tool example.
+ *
+ * This file is intentionally not imported by the main CLI. The MVP uses
+ * src/providers/xiaomi.ts directly and does not depend on OpenCode.
+ */
+
+export async function xiaomiSearchExample(query: string): Promise<unknown> {
+  return {
+    note: "Example only. Wire to Xiaomi MiMo Web Search in a future OpenCode integration.",
+    query
+  };
+}
