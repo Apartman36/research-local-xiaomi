@@ -26,7 +26,11 @@ export async function runResearchTask(params: {
       model: params.model,
       timeoutMs: params.opencodeTimeoutMs
     });
-    const annotations = providerResult.sources.map(sourceToAnnotation);
+    const limitedProviderResult = {
+      ...providerResult,
+      sources: providerResult.sources.slice(0, params.profile.limit)
+    };
+    const annotations = limitedProviderResult.sources.map(sourceToAnnotation);
     const canonicalUrls = annotations.map((annotation) => normalizeUrl(annotation.url));
     const claims: EvidenceClaim[] = annotations.slice(0, 5).map((annotation, index) => ({
       id: `${params.task.id}-C${String(index + 1).padStart(3, "0")}`,
@@ -43,7 +47,7 @@ export async function runResearchTask(params: {
       assistantSynthesis: synthesizeProviderResult(params.task.query, annotations),
       annotations,
       claims,
-      providerResult
+      providerResult: limitedProviderResult
     };
   } catch (error) {
     return {

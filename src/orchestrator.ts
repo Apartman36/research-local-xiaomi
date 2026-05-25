@@ -91,18 +91,27 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     dryRun: config.dryRun
   });
   usage.addCall("critic", criticResult.usage);
+  await logCriticParseFallback(events, criticResult);
   await events.log("critic_completed", {
     needsFollowUp: criticResult.critique.needsFollowUp,
     followUpCount: criticResult.critique.followUpTasks.length
   });
 
-  const followUpTasks = criticResult.critique.followUpTasks.filter((task) => task.depth <= config.profile.maxDepth);
-  if (!config.dryRun && criticResult.critique.needsFollowUp && followUpTasks.length > 0) {
-    const remainingTaskBudget = config.maxTasks ? Math.max(0, config.maxTasks - findings.length) : config.profile.initialSubquestions;
+  const requestedFollowUpTasks = criticResult.critique.followUpTasks;
+  const followUpTasks = requestedFollowUpTasks.filter((task) => task.depth <= config.profile.maxDepth);
+  if (!config.dryRun && criticResult.critique.needsFollowUp && requestedFollowUpTasks.length > 0) {
+    const remainingTaskBudget = typeof config.maxTasks === "number" ? Math.max(0, config.maxTasks - findings.length) : config.profile.initialSubquestions;
+    if (remainingTaskBudget === 0) {
+      await events.log("follow_up_skipped_task_cap_reached", {
+        plannedFollowUpCount: requestedFollowUpTasks.length,
+        maxTasks: config.maxTasks,
+        completedTaskCount: findings.length
+      });
+    }
     const capped = followUpTasks.slice(0, Math.min(config.profile.initialSubquestions, remainingTaskBudget));
     if (capped.length === 0) {
       await events.log("researcher_tasks_capped", {
-        plannedFollowUpCount: followUpTasks.length,
+        plannedFollowUpCount: requestedFollowUpTasks.length,
         maxTasks: config.maxTasks,
         taskCount: findings.length
       });
@@ -129,6 +138,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
         dryRun: config.dryRun
       });
       usage.addCall("critic", criticResult.usage);
+      await logCriticParseFallback(events, criticResult);
       await events.log("critic_completed", { pass: "after_gap_fill" });
     }
   }
@@ -296,6 +306,17 @@ async function logDedupedSources(events: EventLogger, findings: Finding[], sourc
   if (deduplicated > 0) {
     await events.log("source_deduplicated", { rawSources: raw, uniqueSources: sources.length, deduplicated });
   }
+}
+
+async function logCriticParseFallback(
+  events: EventLogger,
+  criticResult: { parseFailed?: boolean; parseError?: string }
+): Promise<void> {
+  if (!criticResult.parseFailed) {
+    return;
+  }
+  await events.log("critic_parse_failed", { error: criticResult.parseError ?? "Critic response could not be parsed." });
+  await events.log("critic_fallback_used");
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {

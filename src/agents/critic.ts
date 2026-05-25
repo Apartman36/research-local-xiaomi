@@ -25,6 +25,35 @@ const critiqueSchema = z.object({
     .default([])
 });
 
+export type CriticResult = {
+  critique: Critique;
+  usage?: XiaomiUsage;
+  parseFailed?: boolean;
+  parseError?: string;
+};
+
+export const fallbackCritique: Critique = {
+  summary: "Critic returned malformed JSON; follow-up planning was skipped.",
+  weakAreas: ["Critic returned malformed JSON; follow-up planning was skipped."],
+  missingCoverage: [],
+  duplicateEvidence: [],
+  followUpTasks: [],
+  needsFollowUp: false
+};
+
+export function parseCritiqueContent(content: string): CriticResult {
+  try {
+    const critique = critiqueSchema.parse(extractJsonObject(content));
+    return { critique };
+  } catch (error) {
+    return {
+      critique: fallbackCritique,
+      parseFailed: true,
+      parseError: safeParseError(error)
+    };
+  }
+}
+
 export async function runCritic(params: {
   apiKey: string;
   baseUrl: string;
@@ -35,7 +64,7 @@ export async function runCritic(params: {
   sources: Source[];
   focus: ResearchFocus;
   dryRun: boolean;
-}): Promise<{ critique: Critique; usage?: XiaomiUsage }> {
+}): Promise<CriticResult> {
   if (params.dryRun) {
     return {
       critique: {
@@ -72,6 +101,11 @@ export async function runCritic(params: {
       }
     ]
   });
-  const critique = critiqueSchema.parse(extractJsonObject(getAssistantContent(response)));
-  return { critique, usage: extractUsage(response) };
+  const parsed = parseCritiqueContent(getAssistantContent(response));
+  return { ...parsed, usage: extractUsage(response) };
+}
+
+function safeParseError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 240);
 }
