@@ -8,10 +8,52 @@ const MAX_SUMMARY_LENGTH = 2200;
 
 export function parseOpenCodeWebsearchOutput(output: string, options: ParseOptions): SearchProviderSource[] {
   const cleaned = stripCodeFence(output);
+  const jsonSources = parseJsonSources(cleaned, options.query);
+  if (jsonSources.length > 0) {
+    return jsonSources;
+  }
   return cleaned
     .split(/\n\s*---\s*\n/g)
     .map((block) => parseBlock(block, options.query))
     .filter((source): source is SearchProviderSource => Boolean(source));
+}
+
+function parseJsonSources(output: string, query: string): SearchProviderSource[] {
+  try {
+    const parsed = JSON.parse(output);
+    const candidates = Array.isArray(parsed) ? parsed : arrayValue((parsed as Record<string, unknown>).sources) ?? arrayValue((parsed as Record<string, unknown>).results) ?? [];
+    return candidates.map((candidate) => sourceFromJson(candidate, query)).filter((source): source is SearchProviderSource => Boolean(source));
+  } catch {
+    return [];
+  }
+}
+
+function sourceFromJson(value: unknown, query: string): SearchProviderSource | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const url = stringValue(record.url) ?? stringValue(record.link);
+  if (!url || !isHttpUrl(url)) {
+    return undefined;
+  }
+  return {
+    title: stringValue(record.title),
+    url,
+    publishedDate: stringValue(record.publishedDate) ?? stringValue(record.published) ?? stringValue(record.date),
+    author: stringValue(record.author),
+    summary: normalizeSummary(stringValue(record.summary) ?? stringValue(record.snippet) ?? stringValue(record.text)),
+    provider: "opencode-web",
+    query
+  };
+}
+
+function arrayValue(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function parseBlock(block: string, query: string): SearchProviderSource | undefined {
@@ -81,4 +123,3 @@ function isHttpUrl(value: string): boolean {
     return false;
   }
 }
-

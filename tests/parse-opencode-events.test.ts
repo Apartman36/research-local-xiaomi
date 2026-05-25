@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenCodeEvents } from "../src/search/parse-opencode-events.js";
+import { OpenCodeEventParser, parseOpenCodeEvents } from "../src/search/parse-opencode-events.js";
 
 describe("parseOpenCodeEvents", () => {
   it("extracts websearch sources and aggregates step tokens", () => {
@@ -57,6 +57,7 @@ describe("parseOpenCodeEvents", () => {
       }
     });
     expect(result.rawEventsCount).toBe(3);
+    expect(result.sourcesExtracted).toBe(true);
   });
 
   it("records parse warnings for non-json lines", () => {
@@ -65,5 +66,25 @@ describe("parseOpenCodeEvents", () => {
     expect(result.sources).toHaveLength(0);
     expect(result.warnings?.[0]).toContain("Skipped non-JSON");
   });
-});
 
+  it("treats a completed websearch tool_use event as sufficient source output", () => {
+    const parser = new OpenCodeEventParser({ taskId: "T001", query: "query" });
+    const completeToolUse = JSON.stringify({
+      type: "tool_use",
+      part: {
+        tool: "websearch",
+        state: {
+          status: "completed",
+          output: "Title: Example\nURL: https://example.com\nHighlights:\nSummary text."
+        }
+      }
+    });
+
+    expect(parser.addLine(completeToolUse)).toBe(true);
+    expect(parser.result({ earlyExit: true })).toMatchObject({
+      sourcesExtracted: true,
+      earlyExit: true,
+      sources: [{ url: "https://example.com" }]
+    });
+  });
+});

@@ -9,9 +9,17 @@ type ParseOptions = {
 type TokenTotals = NonNullable<SearchProviderUsage["tokens"]>;
 
 export function parseOpenCodeEvents(stdout: string, options: ParseOptions): SearchProviderResult {
-  const warnings: string[] = [];
-  const sources: SearchProviderSource[] = [];
-  const tokens: Required<TokenTotals> = {
+  const parser = new OpenCodeEventParser(options);
+  for (const line of stdout.split(/\r?\n/)) {
+    parser.addLine(line);
+  }
+  return parser.result();
+}
+
+export class OpenCodeEventParser {
+  private readonly warnings: string[] = [];
+  private readonly sources: SearchProviderSource[] = [];
+  private readonly tokens: Required<TokenTotals> = {
     total: 0,
     input: 0,
     output: 0,
@@ -19,69 +27,90 @@ export function parseOpenCodeEvents(stdout: string, options: ParseOptions): Sear
     cacheRead: 0,
     cacheWrite: 0
   };
-  let rawEventsCount = 0;
-  let websearchCalls = 0;
-  let webfetchCalls = 0;
+  private rawEventsCount = 0;
+  private websearchCalls = 0;
+  private webfetchCalls = 0;
+  private sourcesExtracted = false;
 
-  for (const line of stdout.split(/\r?\n/)) {
+  constructor(private readonly options: ParseOptions) {}
+
+  addChunk(chunk: string): boolean {
+    for (const line of chunk.split(/\r?\n/)) {
+      this.addLine(line);
+    }
+    return this.hasSources();
+  }
+
+  addLine(line: string): boolean {
     if (!line.trim()) {
-      continue;
+      return this.hasSources();
     }
     let event: unknown;
     try {
       event = JSON.parse(line);
-      rawEventsCount += 1;
+      this.rawEventsCount += 1;
     } catch {
-      warnings.push(`Skipped non-JSON OpenCode stdout line: ${line.slice(0, 120)}`);
-      continue;
+      this.warnings.push(`Skipped non-JSON OpenCode stdout line: ${line.slice(0, 120)}`);
+      return this.hasSources();
     }
     if (!event || typeof event !== "object") {
-      continue;
+      return this.hasSources();
     }
     const record = event as Record<string, unknown>;
     if (record.type === "tool_use") {
       const part = objectValue(record.part);
-      const tool = stringValue(part?.tool);
+      const tool = stringValue(part?.tool) ?? stringValue(part?.name) ?? stringValue(record.tool) ?? stringValue(record.name);
       const state = objectValue(part?.state);
-      const status = stringValue(state?.status);
+      const status = stringValue(state?.status) ?? stringValue(part?.status) ?? stringValue(record.status);
       if (tool === "websearch" && status === "completed") {
-        websearchCalls += 1;
-        const output = stringValue(state?.output);
+        this.websearchCalls += 1;
+        const output = outputString(state?.output ?? part?.output ?? record.output);
         if (output) {
-          sources.push(...parseOpenCodeWebsearchOutput(output, { query: options.query }));
+          const parsedSources = parseOpenCodeWebsearchOutput(output, { query: this.options.query });
+          this.sources.push(...parsedSources);
+          this.sourcesExtracted ||= parsedSources.length > 0;
         }
       } else if (tool === "webfetch" && status === "completed") {
-        webfetchCalls += 1;
+        this.webfetchCalls += 1;
       }
     } else if (record.type === "step_finish") {
       const part = objectValue(record.part);
       const stepTokens = objectValue(part?.tokens);
-      tokens.total += numeric(stepTokens?.total);
-      tokens.input += numeric(stepTokens?.input);
-      tokens.output += numeric(stepTokens?.output);
-      tokens.reasoning += numeric(stepTokens?.reasoning);
+      this.tokens.total += numeric(stepTokens?.total);
+      this.tokens.input += numeric(stepTokens?.input);
+      this.tokens.output += numeric(stepTokens?.output);
+      this.tokens.reasoning += numeric(stepTokens?.reasoning);
       const cache = objectValue(stepTokens?.cache);
-      tokens.cacheRead += numeric(cache?.read);
-      tokens.cacheWrite += numeric(cache?.write);
+      this.tokens.cacheRead += numeric(cache?.read);
+      this.tokens.cacheWrite += numeric(cache?.write);
     } else if (record.type === "error") {
-      warnings.push(`OpenCode error event: ${JSON.stringify(record).slice(0, 500)}`);
+      this.warnings.push(`OpenCode error event: ${JSON.stringify(record).slice(0, 500)}`);
     }
+    return this.hasSources();
   }
 
-  return {
-    taskId: options.taskId,
-    query: options.query,
-    provider: "opencode-web",
-    sources,
-    rawEventsCount,
-    warnings,
-    usage: {
-      calls: 1,
-      websearchCalls,
-      webfetchCalls,
-      tokens
-    }
-  };
+  hasSources(): boolean {
+    return this.sourcesExtracted;
+  }
+
+  result(extra?: { earlyExit?: boolean }): SearchProviderResult {
+    return {
+      taskId: this.options.taskId,
+      query: this.options.query,
+      provider: "opencode-web",
+      sources: this.sources,
+      rawEventsCount: this.rawEventsCount,
+      warnings: this.warnings,
+      sourcesExtracted: this.sourcesExtracted,
+      earlyExit: Boolean(extra?.earlyExit),
+      usage: {
+        calls: 1,
+        websearchCalls: this.websearchCalls,
+        webfetchCalls: this.webfetchCalls,
+        tokens: this.tokens
+      }
+    };
+  }
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
@@ -92,7 +121,16 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function outputString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return undefined;
+}
+
 function numeric(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
-

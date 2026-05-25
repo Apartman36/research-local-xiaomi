@@ -46,6 +46,14 @@ The API key is never written to run artifacts.
 
 ## Quick Start
 
+For the first real OpenCode integration test, use the tiny smoke profile and one researcher task:
+
+```powershell
+pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile smoke5 --focus web --search-provider opencode-web --max-tasks 1 --opencode-timeout-ms 60000 --verbose
+```
+
+Do not use `normal100` for the first integration test; it is intended for longer runs after `smoke5` works.
+
 ```powershell
 pnpm research-xm run --file .\prompts\example-research.md --profile normal100
 ```
@@ -77,6 +85,17 @@ pnpm research-xm run --file .\prompts\research-task.md --profile normal100
 ```
 
 ## Profiles
+
+`smoke5` is a tiny integration profile:
+
+- target unique sources: 5
+- initial subquestions: 1
+- max depth: 1
+- max keyword: 1
+- result limit: 5
+- max concurrent searches: 1
+- model: `mimo-v2.5-pro`
+- language: English
 
 `normal100` is the default:
 
@@ -149,6 +168,7 @@ Internally the config has role model slots so separate planner/researcher/critic
 pnpm dev --help
 pnpm research-xm --help
 pnpm research-xm run --file .\prompts\my-research.md --profile normal100
+pnpm research-xm run --file .\prompts\my-research.md --profile smoke5 --max-tasks 1 --opencode-timeout-ms 60000
 pnpm research-xm run --file .\prompts\my-research.md --profile deep500
 pnpm research-xm run --file .\prompts\my-research.md --model mimo-v2.5-pro
 pnpm research-xm run --file .\prompts\my-research.md --focus github
@@ -256,7 +276,7 @@ OpenCode is useful for future repository analysis or independent review workflow
 - `HTTP 401`: check the API key.
 - `Malformed JSON`: retry the run; the model may have returned invalid structured output.
 - Missing annotations: some Xiaomi responses may not include web annotations. The finding is preserved and source count may be lower.
-- Long runs: use `normal100` first. `deep500` intentionally makes more calls.
+- First real OpenCode run: use `smoke5 --max-tasks 1 --opencode-timeout-ms 60000`. Use `normal100` only after the smoke path works. `deep500` intentionally makes more calls.
 - `pnpm` not found: enable Corepack with `corepack enable`, then run `corepack prepare pnpm@10.12.1 --activate`.
 
 ### Xiaomi native Web Search returns webSearchEnabled is false

@@ -15,7 +15,7 @@ const critiqueSchema = z.object({
     .array(
       z.object({
         id: z.string(),
-        subquestionId: z.string(),
+        subquestionId: z.string().nullable().optional().transform((value) => value ?? "SQ000"),
         query: z.string(),
         rationale: z.string().optional(),
         depth: z.number().int().positive().default(2),

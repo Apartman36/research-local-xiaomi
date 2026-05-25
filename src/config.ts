@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 import { deep500 } from "./profiles/deep500.js";
 import { normal100 } from "./profiles/normal100.js";
+import { smoke5 } from "./profiles/smoke5.js";
 import { DEFAULT_OPENCODE_MODEL } from "./search/search-provider.js";
 import type { ResearchFocus, ResearchProfile, ResearchProfileName, RoleTokenLimits, RunConfig } from "./types.js";
 
@@ -13,6 +14,7 @@ export const DEFAULT_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1";
 export const DEFAULT_MODEL = "mimo-v2.5-pro";
 
 const profileMap: Record<ResearchProfileName, ResearchProfile> = {
+  smoke5,
   normal100,
   deep500
 };
@@ -20,12 +22,14 @@ const profileMap: Record<ResearchProfileName, ResearchProfile> = {
 const runOptionsSchema = z.object({
   file: z.string().optional(),
   inlinePrompt: z.string().optional(),
-  profile: z.enum(["normal100", "deep500"]).default("normal100"),
+  profile: z.enum(["smoke5", "normal100", "deep500"]).default("normal100"),
   model: z.string().default(DEFAULT_MODEL),
   focus: z.enum(["web", "github"]).default("web"),
   searchProvider: z.enum(["opencode-web", "xiaomi-native"]).default("opencode-web"),
   outputDir: z.string().default("./runs"),
   maxOutputTokens: z.coerce.number().int().positive().optional(),
+  maxTasks: z.coerce.number().int().positive().optional(),
+  opencodeTimeoutMs: z.coerce.number().int().positive().default(180_000),
   concurrency: z.coerce.number().int().positive().default(3),
   dryRun: z.boolean().default(false),
   verbose: z.boolean().default(false)
@@ -76,6 +80,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     apiBaseUrl: process.env.XIAOMI_MIMO_BASE_URL ?? DEFAULT_BASE_URL,
     model: parsed.model,
     opencodeModel: process.env.OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL,
+    opencodeTimeoutMs: parsed.opencodeTimeoutMs,
     roleModels: {
       planner: parsed.model,
       researcher: parsed.model,
@@ -84,6 +89,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     },
     maxOutputTokens: roleTokens,
     concurrency: Math.min(parsed.concurrency, profile.maxConcurrentSearches),
+    maxTasks: parsed.maxTasks,
     dryRun: parsed.dryRun,
     verbose: parsed.verbose,
     startedAt: new Date().toISOString()

@@ -28,7 +28,9 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
   await createRunDirectory(config.runDir);
   const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
   const usage = new UsageTracker(config.startedAt, config.profile.name, config.model);
+  let completed = false;
 
+  try {
   await events.log("research_started", {
     runId: config.runId,
     profile: config.profile.name,
@@ -53,7 +55,12 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     dryRun: config.dryRun
   });
   usage.addCall("planner", plannerResult.usage);
-  await events.log("planner_completed", { taskCount: plannerResult.plan.searchTasks.length });
+  const plannedTaskCount = plannerResult.plan.searchTasks.length;
+  if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
+    plannerResult.plan.searchTasks = plannerResult.plan.searchTasks.slice(0, config.maxTasks);
+    await events.log("researcher_tasks_capped", { plannedTaskCount, maxTasks: config.maxTasks, taskCount: plannerResult.plan.searchTasks.length });
+  }
+  await events.log("planner_completed", { taskCount: plannerResult.plan.searchTasks.length, plannedTaskCount });
   await writeJsonArtifact(config.runDir, "plan.json", plannerResult.plan);
   await writeJsonArtifact(config.runDir, "queries.json", plannerResult.plan.searchTasks);
 
@@ -91,29 +98,39 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
 
   const followUpTasks = criticResult.critique.followUpTasks.filter((task) => task.depth <= config.profile.maxDepth);
   if (!config.dryRun && criticResult.critique.needsFollowUp && followUpTasks.length > 0) {
-    const capped = followUpTasks.slice(0, config.profile.initialSubquestions);
-    const gapFindings = await runResearchTasks({ config, apiKey, tasks: capped, usage, events });
-    findings.push(...gapFindings);
-    sources = dedupeSources(findings, config.focus);
-    await logDedupedSources(events, findings, sources);
-    evidence = buildEvidence(findings, sources);
-    await writeJsonArtifact(config.runDir, "sources.json", sources);
-    await writeJsonArtifact(config.runDir, "evidence.json", evidence);
+    const remainingTaskBudget = config.maxTasks ? Math.max(0, config.maxTasks - findings.length) : config.profile.initialSubquestions;
+    const capped = followUpTasks.slice(0, Math.min(config.profile.initialSubquestions, remainingTaskBudget));
+    if (capped.length === 0) {
+      await events.log("researcher_tasks_capped", {
+        plannedFollowUpCount: followUpTasks.length,
+        maxTasks: config.maxTasks,
+        taskCount: findings.length
+      });
+    }
+    if (capped.length > 0) {
+      const gapFindings = await runResearchTasks({ config, apiKey, tasks: capped, usage, events });
+      findings.push(...gapFindings);
+      sources = dedupeSources(findings, config.focus);
+      await logDedupedSources(events, findings, sources);
+      evidence = buildEvidence(findings, sources);
+      await writeJsonArtifact(config.runDir, "sources.json", sources);
+      await writeJsonArtifact(config.runDir, "evidence.json", evidence);
 
-    await events.log("critic_started", { pass: "after_gap_fill" });
-    criticResult = await runCritic({
-      apiKey,
-      baseUrl: config.apiBaseUrl,
-      model: config.roleModels.critic,
-      maxCompletionTokens: config.maxOutputTokens.critic,
-      plan: plannerResult.plan,
-      evidence,
-      sources,
-      focus: config.focus,
-      dryRun: config.dryRun
-    });
-    usage.addCall("critic", criticResult.usage);
-    await events.log("critic_completed", { pass: "after_gap_fill" });
+      await events.log("critic_started", { pass: "after_gap_fill" });
+      criticResult = await runCritic({
+        apiKey,
+        baseUrl: config.apiBaseUrl,
+        model: config.roleModels.critic,
+        maxCompletionTokens: config.maxOutputTokens.critic,
+        plan: plannerResult.plan,
+        evidence,
+        sources,
+        focus: config.focus,
+        dryRun: config.dryRun
+      });
+      usage.addCall("critic", criticResult.usage);
+      await events.log("critic_completed", { pass: "after_gap_fill" });
+    }
   }
 
   await writeJsonArtifact(config.runDir, "critique.json", criticResult.critique);
@@ -152,6 +169,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     totalTokens: finalUsage.total_tokens
   });
 
+  completed = true;
   return {
     runId: config.runId,
     runDir: config.runDir,
@@ -161,6 +179,11 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     usage: finalUsage,
     lintOk: lint.ok
   };
+  } finally {
+    if (!completed) {
+      await events.log("run_incomplete", { runId: config.runId }).catch(() => undefined);
+    }
+  }
 }
 
 async function runResearchTasks(params: {
@@ -185,6 +208,7 @@ async function runResearchTasks(params: {
       profile: params.config.profile,
       task,
       searchProvider,
+      opencodeTimeoutMs: params.config.opencodeTimeoutMs,
       dryRun: params.config.dryRun
     });
     if (finding.error) {
@@ -210,6 +234,12 @@ async function runResearchTasks(params: {
         sources: finding.providerResult.sources.length,
         rawEventsCount: finding.providerResult.rawEventsCount
       });
+      if (finding.providerResult.sourcesExtracted) {
+        await params.events.log("opencode_search_sources_extracted", { taskId: task.id, sources: finding.providerResult.sources.length });
+      }
+      if (finding.providerResult.earlyExit) {
+        await params.events.log("opencode_search_early_exit", { taskId: task.id });
+      }
     }
     params.usage.addRawSources(finding.annotations.length);
     await writeFinding(params.config.runDir, task.id, finding);
@@ -231,7 +261,7 @@ function createSearchProvider(config: RunConfig, apiKey: string): SearchProvider
   if (config.searchProvider === "xiaomi-native") {
     return new XiaomiNativeWebSearchProvider({ apiKey, baseUrl: config.apiBaseUrl });
   }
-  return new OpenCodeWebSearchProvider();
+  return new OpenCodeWebSearchProvider(config.opencodeModel);
 }
 
 function buildEvidence(findings: Finding[], sources: Source[]): EvidenceFile {

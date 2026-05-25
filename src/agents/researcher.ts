@@ -10,6 +10,7 @@ export async function runResearchTask(params: {
   profile: ResearchProfile;
   task: SearchTask;
   searchProvider: SearchProvider;
+  opencodeTimeoutMs?: number;
   dryRun: boolean;
 }): Promise<Finding & { providerResult?: SearchProviderResult }> {
   if (params.dryRun) {
@@ -22,7 +23,8 @@ export async function runResearchTask(params: {
       query: params.task.query,
       focus: params.task.focus,
       maxResults: params.profile.limit,
-      model: params.model
+      model: params.model,
+      timeoutMs: params.opencodeTimeoutMs
     });
     const annotations = providerResult.sources.map(sourceToAnnotation);
     const canonicalUrls = annotations.map((annotation) => normalizeUrl(annotation.url));

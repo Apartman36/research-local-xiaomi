@@ -1,5 +1,5 @@
 export type ResearchFocus = "web" | "github";
-export type ResearchProfileName = "normal100" | "deep500";
+export type ResearchProfileName = "smoke5" | "normal100" | "deep500";
 export type Confidence = "low" | "medium" | "high";
 export type Phase = "planner" | "researcher" | "critic" | "writer" | "smoke";
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
@@ -41,9 +41,11 @@ export type RunConfig = {
   apiBaseUrl: string;
   model: string;
   opencodeModel: string;
+  opencodeTimeoutMs: number;
   roleModels: RoleModels;
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
+  maxTasks?: number;
   dryRun: boolean;
   verbose: boolean;
   startedAt: string;

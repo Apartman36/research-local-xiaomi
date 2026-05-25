@@ -41,6 +41,8 @@ export type SearchProviderResult = {
   usage?: SearchProviderUsage;
   rawEventsCount?: number;
   warnings?: string[];
+  sourcesExtracted?: boolean;
+  earlyExit?: boolean;
 };
 
 export interface SearchProvider {
@@ -49,4 +51,3 @@ export interface SearchProvider {
 }
 
 export const DEFAULT_OPENCODE_MODEL = "xiaomi-token-plan-sgp/mimo-v2.5-pro";
-

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { buildRunConfig, DEFAULT_BASE_URL, DEFAULT_MODEL, requireApiKey } from "./config.js";
@@ -22,12 +22,14 @@ program
   .description("Run a local research workflow.")
   .argument("[prompt]", "short inline research prompt")
   .option("-f, --file <path>", "read a long research prompt from a Markdown/text file")
-  .option("--profile <normal100|deep500>", "research profile", "normal100")
+  .option("--profile <smoke5|normal100|deep500>", "research profile", "normal100")
   .option("--model <model>", "model for all roles", DEFAULT_MODEL)
   .option("--focus <web|github>", "research focus mode", "web")
   .option("--search-provider <opencode-web|xiaomi-native>", "search provider", "opencode-web")
   .option("--output-dir <path>", "run output root directory", "./runs")
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
+  .option("--max-tasks <n>", "cap researcher tasks after planning")
+  .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--concurrency <number>", "max concurrent researcher calls", "3")
   .option("--dry-run", "create artifacts without calling Xiaomi")
   .option("--verbose", "print debug event metadata")
@@ -36,12 +38,14 @@ program
       const config = await buildRunConfig({
         file: options.file as string | undefined,
         inlinePrompt: prompt,
-        profile: options.profile as "normal100" | "deep500" | undefined,
+        profile: options.profile as "smoke5" | "normal100" | "deep500" | undefined,
         model: options.model as string | undefined,
         focus: options.focus as "web" | "github" | undefined,
         searchProvider: options.searchProvider as "opencode-web" | "xiaomi-native" | undefined,
         outputDir: options.outputDir as string | undefined,
         maxOutputTokens: options.maxOutputTokens as string | undefined,
+        maxTasks: options.maxTasks as string | undefined,
+        opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         concurrency: options.concurrency as string | undefined,
         dryRun: Boolean(options.dryRun),
         verbose: Boolean(options.verbose)
@@ -81,10 +85,20 @@ program
   .action(async (run: string, options: { outputDir: string }) => {
     try {
       const runDir = await resolveRun(path.resolve(options.outputDir), run);
-      const usage = await readJson(path.join(runDir, "usage.json"));
       console.log(`Run: ${path.basename(runDir)}`);
       console.log(`Directory: ${runDir}`);
       console.log(`Report: ${path.join(runDir, "report.md")}`);
+      let usage: any;
+      try {
+        usage = await readJson(path.join(runDir, "usage.json"));
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          console.log("Run is incomplete: usage.json not found.");
+          console.log(`Existing files: ${(await listExistingFiles(runDir)).join(", ") || "(none)"}`);
+          return;
+        }
+        throw error;
+      }
       console.log(`Profile: ${usage.profile}`);
       console.log(`Model: ${usage.model}`);
       console.log(`Unique sources: ${usage.uniqueSources}`);
@@ -102,7 +116,16 @@ program
   .action(async (run: string, options: { outputDir: string }) => {
     try {
       const runDir = await resolveRun(path.resolve(options.outputDir), run);
-      const report = await readFile(path.join(runDir, "report.md"), "utf8");
+      let report: string;
+      try {
+        report = await readFile(path.join(runDir, "report.md"), "utf8");
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          console.log("Run is incomplete: report.md not found.");
+          return;
+        }
+        throw error;
+      }
       const sources = (await readJson(path.join(runDir, "sources.json"))) as Source[];
       const lint = lintCitations(report, sources);
       console.log(`Citation lint: ${lint.ok ? "ok" : "failed"}`);
@@ -162,6 +185,22 @@ program.parseAsync(process.argv);
 
 async function readJson(filePath: string): Promise<any> {
   return JSON.parse(await readFile(filePath, "utf8"));
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function listExistingFiles(runDir: string): Promise<string[]> {
+  const entries = (await readdir(runDir, { recursive: true })) as string[];
+  const files: string[] = [];
+  for (const entry of entries) {
+    const fullPath = path.join(runDir, entry);
+    if ((await stat(fullPath)).isFile()) {
+      files.push(entry);
+    }
+  }
+  return files.sort();
 }
 
 function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void {
