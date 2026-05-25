@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { OpenCodeEventParser } from "./parse-opencode-events.js";
 import type { SearchProvider, SearchProviderRequest, SearchProviderResult } from "./search-provider.js";
 
@@ -20,29 +20,25 @@ export class OpenCodeWebSearchProvider implements SearchProvider {
   }
 }
 
-function buildPrompt(request: SearchProviderRequest): string {
-  return [
-    "Use websearch exactly once for the provided query.",
-    "Do not write files.",
-    "Do not use bash.",
-    "Do not use subagents.",
-    "Do not use the task tool.",
-    "Return only sources.",
-    "Each source should have title, url, summary if available.",
-    `Query: ${request.query}`,
-    `Limit: ${request.maxResults}`,
-    `Focus: ${request.focus}`
-  ].join("\n");
+export function buildPrompt(request: SearchProviderRequest): string {
+  const base = `Use websearch exactly once for this query: ${request.query}. Return only ${request.maxResults} sources with title, URL, and short summary. Do not write files. Do not use bash. Do not use subagents. Do not use the task tool.`;
+  if (request.focus === "github") {
+    return `${base} Prefer GitHub repositories, READMEs, docs, examples, issues, and implementation details.`;
+  }
+  return base;
 }
 
 function runOpenCode(args: string[], timeoutMs: number, request: SearchProviderRequest): Promise<SearchProviderResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("opencode", args, {
+      cwd: process.cwd(),
       env: { ...process.env, OPENCODE_ENABLE_EXA: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
     });
     const parser = new OpenCodeEventParser({ taskId: request.taskId, query: request.query });
     let stdoutBuffer = "";
+    let stdout = "";
     let stderr = "";
     let earlyExit = false;
     let settled = false;
@@ -52,12 +48,13 @@ function runOpenCode(args: string[], timeoutMs: number, request: SearchProviderR
       }
       settled = true;
       terminateChild(child);
-      reject(new Error(`OpenCode websearch timed out after ${timeoutMs} ms.`));
+      reject(new Error(buildOpenCodeFailureMessage("timed out", timeoutMs, stdout, stderr, parser.result())));
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      stdout += chunk;
       stdoutBuffer += chunk;
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() ?? "";
@@ -97,7 +94,7 @@ function runOpenCode(args: string[], timeoutMs: number, request: SearchProviderR
         parser.addLine(stdoutBuffer);
       }
       if (code !== 0) {
-        reject(new Error(`OpenCode websearch failed with exit code ${code}: ${stderr.slice(0, 1000)}`));
+        reject(new Error(buildOpenCodeFailureMessage(`failed with exit code ${code}`, timeoutMs, stdout, stderr, parser.result())));
         return;
       }
       resolve(parser.result({ earlyExit }));
@@ -105,7 +102,28 @@ function runOpenCode(args: string[], timeoutMs: number, request: SearchProviderR
   });
 }
 
-function terminateChild(child: ChildProcessWithoutNullStreams): void {
+export function buildOpenCodeFailureMessage(
+  reason: string,
+  timeoutMs: number,
+  stdout: string,
+  stderr: string,
+  result?: Pick<SearchProviderResult, "rawEventsCount" | "sources">
+): string {
+  return [
+    `OpenCode websearch ${reason}.`,
+    `timeoutMs=${timeoutMs}`,
+    `rawEventsParsed=${result?.rawEventsCount ?? "unknown"}`,
+    `sourcesParsed=${result?.sources.length ?? "unknown"}`,
+    `stdoutPreview=${JSON.stringify(lastChars(stdout, 2000))}`,
+    `stderrPreview=${JSON.stringify(lastChars(stderr, 2000))}`
+  ].join(" ");
+}
+
+function lastChars(value: string, count: number): string {
+  return value.length > count ? value.slice(-count) : value;
+}
+
+function terminateChild(child: ChildProcess): void {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
