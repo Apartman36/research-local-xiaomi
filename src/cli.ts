@@ -1,24 +1,27 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { Command } from "commander";
 import { buildRunConfig, DEFAULT_BASE_URL, DEFAULT_MODEL, requireApiKey } from "./config.js";
 import { lintCitations } from "./evidence/citation-linter.js";
 import { chat, chatWithWebSearch, extractAnnotations, extractUsage } from "./providers/xiaomi.js";
 import { runResearch } from "./orchestrator.js";
+import { generateRunSummary, getRunSummaryPath, listRunArtifacts } from "./store/run-summary.js";
 import { listRuns, resolveRun } from "./store/run-store.js";
 import type { RunConfig, Source } from "./types.js";
 
-const program = new Command();
+export function createProgram(): Command {
+  const program = new Command();
 
-program
-  .name("research-xm")
-  .description("Local research orchestration CLI powered by Xiaomi MiMo Web Search.")
-  .version("0.1.0")
-  .addHelpText("after", "\nRun option: --search-provider <opencode-web|xiaomi-native> defaults to opencode-web.");
+  program
+    .name("research-xm")
+    .description("Local research orchestration CLI powered by Xiaomi MiMo Web Search.")
+    .version("0.1.0")
+    .addHelpText("after", "\nRun option: --search-provider <opencode-web|xiaomi-native> defaults to opencode-web.");
 
-program
+  program
   .command("run")
   .description("Run a local research workflow.")
   .argument("[prompt]", "short inline research prompt")
@@ -73,7 +76,7 @@ program
     }
   });
 
-program
+  program
   .command("list")
   .description("List local research runs.")
   .option("--output-dir <path>", "run output root directory", "./runs")
@@ -92,7 +95,7 @@ program
     }
   });
 
-program
+  program
   .command("show")
   .description("Show a run summary.")
   .argument("<run>", "run id or latest")
@@ -109,7 +112,7 @@ program
       } catch (error) {
         if (isMissingFileError(error)) {
           console.log("Run is incomplete: usage.json not found.");
-          console.log(`Existing files: ${(await listExistingFiles(runDir)).join(", ") || "(none)"}`);
+          console.log(`Existing files: ${(await listRunArtifacts(runDir)).join(", ") || "(none)"}`);
           return;
         }
         throw error;
@@ -123,7 +126,7 @@ program
     }
   });
 
-program
+  program
   .command("validate")
   .description("Validate report citations for a run.")
   .argument("<run>", "run id or latest")
@@ -154,7 +157,21 @@ program
     }
   });
 
-program
+  program
+    .command("summary")
+    .description("Print or generate the human-friendly run summary.")
+    .argument("<run>", "run id or latest")
+    .option("--output-dir <path>", "run output root directory", "./runs")
+    .option("--path", "print only the run_summary.md path")
+    .action(async (run: string, options: { outputDir: string; path?: boolean }) => {
+      try {
+        process.stdout.write(await printSummaryCommand(run, { outputDir: options.outputDir, pathOnly: Boolean(options.path) }));
+      } catch (error) {
+        exitWithError(error);
+      }
+    });
+
+  program
   .command("smoke")
   .description("Run a real Xiaomi API smoke test. Uses basic chat unless --web is passed.")
   .option("--web", "include Xiaomi Web Search")
@@ -196,7 +213,36 @@ program
     }
   });
 
-program.parseAsync(process.argv);
+  return program;
+}
+
+export async function printSummaryCommand(
+  run: string,
+  options: { outputDir: string; pathOnly?: boolean }
+): Promise<string> {
+  const runDir = await resolveRun(path.resolve(options.outputDir), run);
+  const summaryPath = getRunSummaryPath(runDir);
+  if (options.pathOnly) {
+    if (!(await fileExists(summaryPath))) {
+      await generateRunSummary(runDir);
+    }
+    return `${summaryPath}\n`;
+  }
+  if (await fileExists(summaryPath)) {
+    return readFile(summaryPath, "utf8");
+  }
+  const summary = await generateRunSummary(runDir);
+  if (summary.missingArtifacts.includes("usage.json")) {
+    const files = await listRunArtifacts(runDir);
+    const existing = files.length > 0 ? files.join(", ") : "(none)";
+    return `${summary.markdown}\nRun is incomplete: usage.json not found.\nExisting files: ${existing}\n`;
+  }
+  return summary.markdown;
+}
+
+if (isDirectExecution()) {
+  await createProgram().parseAsync(process.argv);
+}
 
 async function readJson(filePath: string): Promise<any> {
   return JSON.parse(await readFile(filePath, "utf8"));
@@ -206,21 +252,12 @@ function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-async function listExistingFiles(runDir: string): Promise<string[]> {
-  const entries = (await readdir(runDir, { recursive: true })) as string[];
-  const files: string[] = [];
-  for (const entry of entries) {
-    const fullPath = path.join(runDir, entry);
-    if ((await stat(fullPath)).isFile()) {
-      files.push(entry);
-    }
-  }
-  return files.sort();
-}
-
 function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void {
   console.log("Research complete.");
   console.log(`Run: ${result.runId}`);
+  if (result.summaryPath) {
+    console.log(`Summary: ${result.summaryPath}`);
+  }
   console.log(`Report: ${result.reportPath}`);
   console.log(`Profile: ${result.usage.profile}`);
   console.log(`Model: ${result.usage.model}`);
@@ -246,8 +283,35 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
       console.log(`OpenCode tokens: ${result.usage.opencode.tokens.total}`);
     }
   }
-  console.log(`Report review: ${result.reportReview ? `yes (readyForUse: ${result.reportReview.readyForUse})` : "no"}`);
+  console.log(`Researcher calls: ${result.usage.callsByPhase.researcher ?? 0}`);
+  console.log(`Report reviewer calls: ${result.usage.callsByPhase.reportReviewer ?? 0}`);
+  console.log(`Report review: ${formatReportReview(result.reportReview)}`);
   console.log(`Duration: ${result.usage.duration_seconds ?? 0}`);
+}
+
+function formatReportReview(reportReview: Awaited<ReturnType<typeof runResearch>>["reportReview"]): string {
+  if (!reportReview) {
+    return "no";
+  }
+  const quality = typeof reportReview.qualityScore === "number" ? `, qualityScore: ${reportReview.qualityScore}` : "";
+  return `yes, readyForUse: ${reportReview.readyForUse}${quality}`;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isDirectExecution(): boolean {
+  const entry = process.argv[1];
+  return Boolean(entry && import.meta.url === pathToFileURL(path.resolve(entry)).href);
 }
 
 async function playNotification(success: boolean): Promise<void> {

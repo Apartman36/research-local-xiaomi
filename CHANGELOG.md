@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added `run_summary.md` as a compact human-friendly overview written after each run.
+- Added `research-xm summary <run>` with `latest` resolution and `--path`.
+- Improved final console output with summary path, researcher/report-reviewer calls, review readiness, quality score, and OpenCode early-exit token status.
+- Added `docs/PROJECT_OVERVIEW.md` for future agents and research runs.
+- Added `docs/SELF_AUDIT_WORKFLOW.md` describing a safe research-to-Codex patch workflow.
+- Added `prompts/research-local-xiaomi-self-audit.md` as a self-audit research fixture.
 - Added real Xiaomi researcher extraction per search task, enabled by default with `--researcher-mode extract`.
 - Added non-fatal researcher fallback to mechanical claims when extraction fails or returns malformed JSON.
 - Hardened planner parsing with invalid/missing focus coercion and deterministic fallback plans.

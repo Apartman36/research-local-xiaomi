@@ -1,8 +1,8 @@
 # research-local-xiaomi
 
-`research-local-xiaomi` is a personal local research CLI powered by Xiaomi MiMo chat plus a pluggable search provider. It reads a prompt, creates a run folder, plans the work, searches with OpenCode websearch by default, deduplicates sources, builds evidence, critiques gaps, writes an English Markdown report, and records usage and debug events.
+`research-local-xiaomi` is a personal local research CLI powered by Xiaomi MiMo chat plus a pluggable search provider. It reads a prompt, creates a run folder, plans the work, searches with OpenCode websearch by default, deduplicates sources, builds evidence, critiques gaps, writes an English Markdown report, reviews it, records usage and debug events, and writes a compact `run_summary.md`.
 
-Version `0.2` remains intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, and no browser automation. The quality upgrade adds Xiaomi researcher extraction per search task and a Xiaomi report-review QA artifact.
+Version `0.2.1` remains intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, and no browser automation. The usability upgrade adds a human-friendly run summary, a `summary` command, and self-audit documentation without implementing autonomous code modification.
 
 ## What It Is Not
 
@@ -70,6 +70,7 @@ Useful example prompts are included:
 - `prompts/interior-design-3d-ai-smoke.md`
 - `prompts/interior-design-github-smoke.md`
 - `prompts/geometry-preserving-followup.md`
+- `prompts/research-local-xiaomi-self-audit.md`
 
 The default search provider is `opencode-web`:
 
@@ -204,6 +205,8 @@ pnpm research-xm run --file .\prompts\my-research.md --no-review-report
 pnpm research-xm list
 pnpm research-xm show latest
 pnpm research-xm validate latest
+pnpm research-xm summary latest
+pnpm research-xm summary latest --path
 pnpm research-xm smoke
 pnpm research-xm smoke --web
 ```
@@ -227,8 +230,27 @@ Each run is written under `./runs/<run-id>/`:
 - `usage.json`
 - `events.jsonl`
 - `report.md`
+- `run_summary.md`
 
 There is no `raw/` directory and no raw provider response archive.
+
+## Reading Run Results
+
+Recommended workflow after a run:
+
+```powershell
+pnpm research-xm show latest
+pnpm research-xm validate latest
+pnpm research-xm summary latest
+```
+
+Then open:
+
+- `runs/<run-id>/run_summary.md` for status, quality, usage, source, and next-action overview.
+- `runs/<run-id>/report.md` for the research report.
+- `runs/<run-id>/report_review.md` for QA gaps and recommendations.
+
+If `run_summary.md` is missing for an older or incomplete run, `research-xm summary latest` generates it from available artifacts when possible and prints a friendly incomplete-run message instead of crashing on missing files.
 
 ## Usage And Token Accounting
 
@@ -256,6 +278,12 @@ Report review is enabled by default. After the writer creates `report.md`, Xiaom
 - `report_review.md`
 
 The CLI summary prints whether review artifacts exist and the reviewer's `readyForUse` value. Disable it with `--no-review-report` when debugging.
+
+## Project And Self-Audit Docs
+
+- `docs/PROJECT_OVERVIEW.md` summarizes the current architecture, providers, pipeline, artifacts, limitations, run sizes, and roadmap for future agents.
+- `docs/SELF_AUDIT_WORKFLOW.md` explains how to use research outputs to guide Codex patches safely without letting `research-xm` modify source code.
+- `prompts/research-local-xiaomi-self-audit.md` is a reusable prompt fixture for researching how to improve this project.
 
 ## Notifications
 
@@ -303,6 +331,7 @@ The tool keeps normalized artifacts that are useful for debugging without archiv
 - Citation repair is best effort; lint warnings are not hidden.
 - The report reviewer is QA only; it does not revise `report.md`.
 - v0.2 does not implement a research-to-backlog knowledge loop.
+- v0.2.1 adds run summaries and self-audit docs, but still does not implement autonomous self-modification.
 
 ## Why Embeddings Are Not Included Yet
 

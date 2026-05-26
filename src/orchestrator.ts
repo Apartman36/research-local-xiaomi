@@ -11,6 +11,7 @@ import { OpenCodeWebSearchProvider } from "./search/opencode-websearch.js";
 import type { SearchProvider } from "./search/search-provider.js";
 import { isXiaomiNativeWebSearchDisabled, XiaomiNativeWebSearchProvider } from "./search/xiaomi-native-websearch.js";
 import { EventLogger } from "./store/events.js";
+import { generateRunSummary, getRunSummaryPath } from "./store/run-summary.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
 import type { Critique, EvidenceClaim, EvidenceFile, Finding, Plan, ReportReview, RunConfig, SearchTask, Source, UsageSummary } from "./types.js";
@@ -26,6 +27,7 @@ export type RunResult = {
   lintOk: boolean;
   lintUnknownNumbers: number[];
   reportReview?: ReportReview;
+  summaryPath?: string;
 };
 
 export async function runResearch(config: RunConfig, apiKey: string): Promise<RunResult> {
@@ -205,6 +207,15 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     sourcesUsedInReport: lint.sourcesUsed,
     totalTokens: finalUsage.total_tokens
   });
+  let summaryPath: string | undefined;
+  try {
+    const summary = await generateRunSummary(config.runDir);
+    summaryPath = summary.path;
+    await events.log("run_summary_written", { path: summary.path });
+  } catch (error) {
+    summaryPath = getRunSummaryPath(config.runDir);
+    await events.log("run_summary_failed", { error: safeError(error), path: summaryPath }).catch(() => undefined);
+  }
 
   completed = true;
   return {
@@ -217,7 +228,8 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     usage: finalUsage,
     lintOk: lint.ok,
     lintUnknownNumbers: lint.unknownNumbers,
-    reportReview
+    reportReview,
+    summaryPath
   };
   } finally {
     if (!completed) {

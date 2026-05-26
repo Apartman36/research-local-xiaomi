@@ -127,11 +127,14 @@ describe("orchestrator report reviewer", () => {
     const result = await runResearch(config, "test-key");
     const review = JSON.parse(await readFile(path.join(config.runDir, "report_review.json"), "utf8"));
     const markdown = await readFile(path.join(config.runDir, "report_review.md"), "utf8");
+    const runSummary = await readFile(path.join(config.runDir, "run_summary.md"), "utf8");
 
     expect(result.reportReview?.readyForUse).toBe(true);
+    expect(result.summaryPath).toBe(path.join(config.runDir, "run_summary.md"));
     expect(result.usage.callsByPhase.reportReviewer).toBe(1);
     expect(review.readyForUse).toBe(true);
     expect(markdown).toContain("Ready for use: yes");
+    expect(runSummary).toContain("Report review readyForUse: true");
   });
 });
 
