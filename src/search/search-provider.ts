@@ -23,6 +23,7 @@ export type SearchProviderUsage = {
   calls: number;
   websearchCalls?: number;
   webfetchCalls?: number;
+  tokensUnavailable?: boolean;
   tokens?: {
     total?: number;
     input?: number;

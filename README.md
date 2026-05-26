@@ -2,7 +2,7 @@
 
 `research-local-xiaomi` is a personal local research CLI powered by Xiaomi MiMo chat plus a pluggable search provider. It reads a prompt, creates a run folder, plans the work, searches with OpenCode websearch by default, deduplicates sources, builds evidence, critiques gaps, writes an English Markdown report, and records usage and debug events.
 
-Version `0.1.0` is intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, and no browser automation.
+Version `0.2` remains intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, and no browser automation. The quality upgrade adds Xiaomi researcher extraction per search task and a Xiaomi report-review QA artifact.
 
 ## What It Is Not
 
@@ -49,7 +49,7 @@ The API key is never written to run artifacts.
 For the first real OpenCode integration test, use the tiny smoke profile and one researcher task:
 
 ```powershell
-pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile smoke5 --focus web --search-provider opencode-web --max-tasks 1 --opencode-timeout-ms 60000 --verbose
+pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile smoke5 --focus web --search-provider opencode-web --max-tasks 1 --opencode-timeout-ms 60000 --researcher-mode extract --notify --verbose
 ```
 
 Do not use `normal100` for the first integration test; it is intended for longer runs after `smoke5` works.
@@ -57,6 +57,19 @@ Do not use `normal100` for the first integration test; it is intended for longer
 ```powershell
 pnpm research-xm run --file .\prompts\example-research.md --profile normal100
 ```
+
+Medium and deep-ish quality-first runs:
+
+```powershell
+pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile normal100 --focus web --search-provider opencode-web --max-tasks 3 --opencode-timeout-ms 120000 --researcher-mode extract --notify --verbose
+pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile deep500 --focus web --search-provider opencode-web --max-tasks 12 --opencode-timeout-ms 180000 --researcher-mode extract --notify --verbose
+```
+
+Useful example prompts are included:
+
+- `prompts/interior-design-3d-ai-smoke.md`
+- `prompts/interior-design-github-smoke.md`
+- `prompts/geometry-preserving-followup.md`
 
 The default search provider is `opencode-web`:
 
@@ -151,6 +164,18 @@ pnpm research-xm run --file .\prompts\test.md --search-provider xiaomi-native
 
 Xiaomi native Web Search may fail for Token Plan keys even when normal Xiaomi chat works. If it fails with `webSearchEnabled is false`, use `--search-provider opencode-web`.
 
+## Researcher Extraction
+
+By default, each search task runs in `--researcher-mode extract`. OpenCode only returns sources; Xiaomi MiMo then receives the task metadata, query, focus, and provider source snippets and extracts grounded structured claims. The finding records `extractionMode: "xiaomi"` when this succeeds.
+
+Use mechanical mode for fast debugging or to preserve the old title/summary claim generation:
+
+```powershell
+pnpm research-xm run --file .\prompts\example-research.md --researcher-mode mechanical
+```
+
+If extraction returns malformed JSON or fails, the task falls back to mechanical claims, emits fallback events, and the run continues.
+
 ## Model Switching
 
 One option changes all roles:
@@ -174,6 +199,8 @@ pnpm research-xm run --file .\prompts\my-research.md --model mimo-v2.5-pro
 pnpm research-xm run --file .\prompts\my-research.md --focus github
 pnpm research-xm run --file .\prompts\my-research.md --search-provider opencode-web
 pnpm research-xm run --file .\prompts\my-research.md --search-provider xiaomi-native
+pnpm research-xm run --file .\prompts\my-research.md --researcher-mode extract --notify
+pnpm research-xm run --file .\prompts\my-research.md --no-review-report
 pnpm research-xm list
 pnpm research-xm show latest
 pnpm research-xm validate latest
@@ -195,6 +222,8 @@ Each run is written under `./runs/<run-id>/`:
 - `sources.json`
 - `evidence.json`
 - `critique.json`
+- `report_review.json`
+- `report_review.md`
 - `usage.json`
 - `events.jsonl`
 - `report.md`
@@ -216,6 +245,21 @@ There is no `raw/` directory and no raw provider response archive.
 - profile and model
 
 OpenCode/Exa search cost is not invented. When unavailable, `usage.json` records OpenCode `cost` as `null`.
+
+For early-exit OpenCode runs, token totals may be unavailable because `research-xm` terminates the subprocess after sources are extracted. In that case `usage.json` may include `opencode.tokensUnavailable: true`, and the CLI prints `OpenCode tokens: unavailable (early exit)` instead of presenting `0` as real token accounting.
+
+## Report Review
+
+Report review is enabled by default. After the writer creates `report.md`, Xiaomi MiMo reviews the report against `sources.json`, `evidence.json`, `critique.json`, and the plan. The reviewer does not rewrite the report. It writes:
+
+- `report_review.json`
+- `report_review.md`
+
+The CLI summary prints whether review artifacts exist and the reviewer's `readyForUse` value. Disable it with `--no-review-report` when debugging.
+
+## Notifications
+
+Add `--notify` to play a best-effort sound when a run succeeds or fails. On Windows this uses PowerShell console beeps; on other platforms it falls back to the terminal bell. Notification failure never fails the research run.
 
 ## Citation Format
 
@@ -243,7 +287,7 @@ The citation linter checks that every citation number exists in `sources.json`. 
 
 The tool keeps normalized artifacts that are useful for debugging without archiving complete provider responses. `events.jsonl`, `findings/*.json`, `sources.json`, `evidence.json`, and `usage.json` preserve the important operational and research state while reducing privacy and storage risk.
 
-## Limitations Of v0.1
+## Limitations Of v0.2
 
 - CLI-only.
 - OpenCode websearch is required for default real search runs.
@@ -257,6 +301,8 @@ The tool keeps normalized artifacts that are useful for debugging without archiv
 - No X/Twitter support.
 - Source extraction depends on selected provider results being present.
 - Citation repair is best effort; lint warnings are not hidden.
+- The report reviewer is QA only; it does not revise `report.md`.
+- v0.2 does not implement a research-to-backlog knowledge loop.
 
 ## Why Embeddings Are Not Included Yet
 
@@ -266,9 +312,9 @@ Embeddings may be useful later for searching across previous research runs, loca
 
 The MVP relies on Xiaomi Web Search annotations. Browser automation adds fragility, state, credentials, anti-bot handling, rendering issues, and larger dependencies. It can be reconsidered later for specific sites where API/search annotations are insufficient.
 
-## Why OpenCode Is Optional/Future
+## Why OpenCode Does Not Write Artifacts
 
-OpenCode is useful for future repository analysis or independent review workflows, but the MVP must run as a standalone TypeScript CLI. The `.opencode` files are examples only; the main pipeline does not call `opencode`.
+OpenCode is the default search adapter for real web runs, but it is deliberately limited to stdout JSON events from `websearch`/`webfetch`. It must not edit files, run project commands, or write artifacts. `research-xm` owns all files under each run directory.
 
 ## Troubleshooting
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
@@ -7,7 +8,7 @@ import { lintCitations } from "./evidence/citation-linter.js";
 import { chat, chatWithWebSearch, extractAnnotations, extractUsage } from "./providers/xiaomi.js";
 import { runResearch } from "./orchestrator.js";
 import { listRuns, resolveRun } from "./store/run-store.js";
-import type { Source } from "./types.js";
+import type { RunConfig, Source } from "./types.js";
 
 const program = new Command();
 
@@ -26,34 +27,48 @@ program
   .option("--model <model>", "model for all roles", DEFAULT_MODEL)
   .option("--focus <web|github>", "research focus mode", "web")
   .option("--search-provider <opencode-web|xiaomi-native>", "search provider", "opencode-web")
+  .option("--researcher-mode <extract|mechanical>", "researcher extraction mode", "extract")
+  .option("--review-report", "write report_review.json and report_review.md QA artifacts", true)
+  .option("--no-review-report", "skip report review QA artifacts")
   .option("--output-dir <path>", "run output root directory", "./runs")
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
   .option("--max-tasks <n>", "cap researcher tasks after planning")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--concurrency <number>", "max concurrent researcher calls", "3")
+  .option("--notify", "play a completion or failure sound")
   .option("--dry-run", "create artifacts without calling Xiaomi")
   .option("--verbose", "print debug event metadata")
   .action(async (prompt: string | undefined, options: Record<string, unknown>) => {
+    let config: RunConfig | undefined;
     try {
-      const config = await buildRunConfig({
+      config = await buildRunConfig({
         file: options.file as string | undefined,
         inlinePrompt: prompt,
         profile: options.profile as "smoke5" | "normal100" | "deep500" | undefined,
         model: options.model as string | undefined,
         focus: options.focus as "web" | "github" | undefined,
         searchProvider: options.searchProvider as "opencode-web" | "xiaomi-native" | undefined,
+        researcherMode: options.researcherMode as "extract" | "mechanical" | undefined,
+        reviewReport: options.reviewReport as boolean | undefined,
         outputDir: options.outputDir as string | undefined,
         maxOutputTokens: options.maxOutputTokens as string | undefined,
         maxTasks: options.maxTasks as string | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         concurrency: options.concurrency as string | undefined,
+        notify: Boolean(options.notify),
         dryRun: Boolean(options.dryRun),
         verbose: Boolean(options.verbose)
       });
       const apiKey = config.dryRun ? "dry-run" : requireApiKey();
       const result = await runResearch(config, apiKey);
       printRunSummary(result);
+      if (config.notify) {
+        await playNotification(true);
+      }
     } catch (error) {
+      if (config?.notify) {
+        await playNotification(false);
+      }
       exitWithError(error);
     }
   });
@@ -211,12 +226,50 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
   console.log(`Model: ${result.usage.model}`);
   console.log(`Focus: ${result.focus}`);
   console.log(`Search provider: ${result.searchProvider}`);
+  console.log(`Researcher mode: ${result.researcherMode}`);
   console.log(`Unique sources: ${result.usage.uniqueSources}`);
   console.log(`Sources used in report: ${result.usage.sourcesUsedInReport}`);
+  console.log(`Citation lint: ${result.lintOk ? "ok" : "failed"}`);
+  if (!result.lintOk) {
+    console.log(`Unknown citation numbers: ${result.lintUnknownNumbers.join(", ")}`);
+  }
   console.log(`Total tokens: ${result.usage.total_tokens}`);
   console.log(`Web search tool usage: ${result.usage.web_search_usage.tool_usage}`);
   console.log(`Web search page usage: ${result.usage.web_search_usage.page_usage}`);
+  if (result.searchProvider === "opencode-web") {
+    console.log(`OpenCode calls: ${result.usage.opencode.calls}`);
+    console.log(`OpenCode websearch calls: ${result.usage.opencode.websearch_calls}`);
+    console.log(`OpenCode webfetch calls: ${result.usage.opencode.webfetch_calls}`);
+    if (result.usage.opencode.tokensUnavailable) {
+      console.log("OpenCode tokens: unavailable (early exit)");
+    } else {
+      console.log(`OpenCode tokens: ${result.usage.opencode.tokens.total}`);
+    }
+  }
+  console.log(`Report review: ${result.reportReview ? `yes (readyForUse: ${result.reportReview.readyForUse})` : "no"}`);
   console.log(`Duration: ${result.usage.duration_seconds ?? 0}`);
+}
+
+async function playNotification(success: boolean): Promise<void> {
+  try {
+    if (process.platform === "win32") {
+      const command = success
+        ? "[console]::beep(880,700); [console]::beep(1100,700)"
+        : "[console]::beep(300,1000)";
+      await new Promise<void>((resolve) => {
+        const child = spawn("powershell.exe", ["-NoProfile", "-Command", command], {
+          stdio: "ignore",
+          windowsHide: true
+        });
+        child.on("error", () => resolve());
+        child.on("close", () => resolve());
+      });
+      return;
+    }
+    process.stderr.write("\x07");
+  } catch {
+    // Notification is best effort only.
+  }
 }
 
 function exitWithError(error: unknown): never {

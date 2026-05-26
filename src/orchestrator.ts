@@ -4,6 +4,7 @@ import { dedupeSources } from "./evidence/dedupe-sources.js";
 import { citationIndexBySourceId, sourceIdByCanonicalUrl } from "./evidence/source-ids.js";
 import { runCritic } from "./agents/critic.js";
 import { runPlanner } from "./agents/planner.js";
+import { renderReportReviewMarkdown, runReportReviewer } from "./agents/report-reviewer.js";
 import { runResearchTask } from "./agents/researcher.js";
 import { runWriter } from "./agents/writer.js";
 import { OpenCodeWebSearchProvider } from "./search/opencode-websearch.js";
@@ -12,7 +13,7 @@ import { isXiaomiNativeWebSearchDisabled, XiaomiNativeWebSearchProvider } from "
 import { EventLogger } from "./store/events.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
-import type { EvidenceClaim, EvidenceFile, Finding, RunConfig, SearchTask, Source, UsageSummary } from "./types.js";
+import type { Critique, EvidenceClaim, EvidenceFile, Finding, Plan, ReportReview, RunConfig, SearchTask, Source, UsageSummary } from "./types.js";
 
 export type RunResult = {
   runId: string;
@@ -20,8 +21,11 @@ export type RunResult = {
   reportPath: string;
   focus: string;
   searchProvider: string;
+  researcherMode: string;
   usage: UsageSummary;
   lintOk: boolean;
+  lintUnknownNumbers: number[];
+  reportReview?: ReportReview;
 };
 
 export async function runResearch(config: RunConfig, apiKey: string): Promise<RunResult> {
@@ -37,6 +41,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     focus: config.focus,
     searchProvider: config.searchProvider,
     model: config.model,
+    researcherMode: config.researcherMode,
     dryRun: config.dryRun
   });
   await events.log("search_provider_selected", { provider: config.searchProvider });
@@ -55,6 +60,13 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     dryRun: config.dryRun
   });
   usage.addCall("planner", plannerResult.usage);
+  if (plannerResult.parseFailed) {
+    await events.log("planner_parse_failed", { error: plannerResult.parseError ?? "Planner response could not be parsed." });
+    await events.log("planner_fallback_used");
+  }
+  for (const coercion of plannerResult.coercions ?? []) {
+    await events.log("planner_focus_coerced", coercion);
+  }
   const plannedTaskCount = plannerResult.plan.searchTasks.length;
   if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
     plannerResult.plan.searchTasks = plannerResult.plan.searchTasks.slice(0, config.maxTasks);
@@ -163,6 +175,21 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
   await writeTextArtifact(config.runDir, "report.md", writerResult.report);
   await events.log("writer_completed", { bytes: Buffer.byteLength(writerResult.report, "utf8") });
 
+  let reportReview: ReportReview | undefined;
+  if (config.reviewReport) {
+    reportReview = await runReportReviewStage({
+      config,
+      apiKey,
+      events,
+      usage,
+      report: writerResult.report,
+      plan: plannerResult.plan,
+      evidence,
+      critique: criticResult.critique,
+      sources
+    });
+  }
+
   await events.log("citation_lint_started");
   const lint = lintCitations(writerResult.report, sources);
   if (!lint.ok) {
@@ -186,8 +213,11 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     reportPath: path.join(config.runDir, "report.md"),
     focus: config.focus,
     searchProvider: config.searchProvider,
+    researcherMode: config.researcherMode,
     usage: finalUsage,
-    lintOk: lint.ok
+    lintOk: lint.ok,
+    lintUnknownNumbers: lint.unknownNumbers,
+    reportReview
   };
   } finally {
     if (!completed) {
@@ -219,7 +249,9 @@ async function runResearchTasks(params: {
       task,
       searchProvider,
       opencodeTimeoutMs: params.config.opencodeTimeoutMs,
-      dryRun: params.config.dryRun
+      researcherMode: params.config.researcherMode,
+      dryRun: params.config.dryRun,
+      onEvent: (type, metadata) => params.events.log(type, metadata)
     });
     if (finding.error) {
       params.usage.addError();
@@ -231,7 +263,7 @@ async function runResearchTasks(params: {
         await params.events.log("xiaomi_native_websearch_disabled", { taskId: task.id });
       }
     }
-    if (finding.usage) {
+    if (finding.usage || (params.config.researcherMode === "extract" && (finding.extractionMode === "xiaomi" || finding.parseFailed))) {
       params.usage.addCall("researcher", finding.usage);
     }
     if (finding.providerResult?.provider === "opencode-web") {
@@ -265,6 +297,71 @@ async function runResearchTasks(params: {
     findings.push(finding);
   });
   return findings.sort((a, b) => a.taskId.localeCompare(b.taskId));
+}
+
+async function runReportReviewStage(params: {
+  config: RunConfig;
+  apiKey: string;
+  events: EventLogger;
+  usage: UsageTracker;
+  report: string;
+  plan: Plan;
+  evidence: EvidenceFile;
+  critique: Critique;
+  sources: Source[];
+}): Promise<ReportReview> {
+  await params.events.log("report_review_started");
+  try {
+    const reviewResult = await runReportReviewer({
+      apiKey: params.apiKey,
+      baseUrl: params.config.apiBaseUrl,
+      model: params.config.roleModels.reportReviewer,
+      maxCompletionTokens: params.config.maxOutputTokens.reportReviewer,
+      report: params.report,
+      plan: params.plan,
+      evidence: params.evidence,
+      critique: params.critique,
+      sources: params.sources,
+      dryRun: params.config.dryRun
+    });
+    params.usage.addCall("reportReviewer", reviewResult.usage);
+    if (reviewResult.parseFailed) {
+      await params.events.log("report_review_failed", { error: reviewResult.parseError ?? "Report reviewer response could not be parsed." });
+      await params.events.log("report_review_fallback_used");
+    }
+    await writeJsonArtifact(params.config.runDir, "report_review.json", reviewResult.review);
+    await writeTextArtifact(params.config.runDir, "report_review.md", renderReportReviewMarkdown(reviewResult.review));
+    await params.events.log("report_review_completed", {
+      readyForUse: reviewResult.review.readyForUse,
+      qualityScore: reviewResult.review.qualityScore
+    });
+    return reviewResult.review;
+  } catch (error) {
+    const reason = safeError(error);
+    const review: ReportReview = {
+      overallAssessment: `Report reviewer failed: ${reason}`,
+      qualityScore: 0,
+      citationAssessment: {
+        hasUnsupportedClaims: false,
+        unsupportedClaims: [],
+        citationCoverage: "Report reviewer failed; rely on citation_linter output."
+      },
+      sourceQuality: {
+        strongSources: [],
+        weakSources: [],
+        marketingHeavy: false,
+        notes: "Source quality was not reviewed because the reviewer failed."
+      },
+      gaps: [],
+      recommendations: ["Review report artifacts manually."],
+      readyForUse: false
+    };
+    await params.events.log("report_review_failed", { error: reason });
+    await params.events.log("report_review_fallback_used");
+    await writeJsonArtifact(params.config.runDir, "report_review.json", review);
+    await writeTextArtifact(params.config.runDir, "report_review.md", renderReportReviewMarkdown(review));
+    return review;
+  }
 }
 
 function createSearchProvider(config: RunConfig, apiKey: string): SearchProvider {
@@ -336,4 +433,9 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
 function sanitizeConfig(config: RunConfig): Omit<RunConfig, "prompt"> {
   const { prompt: _prompt, ...rest } = config;
   return rest;
+}
+
+function safeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 240);
 }

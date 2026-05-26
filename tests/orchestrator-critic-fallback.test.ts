@@ -153,7 +153,8 @@ async function testConfig(options: { maxTasks: number }) {
     outputDir: dir,
     profile: "smoke5",
     searchProvider: "opencode-web",
-    maxTasks: options.maxTasks
+    maxTasks: options.maxTasks,
+    reviewReport: false
   });
 }
 

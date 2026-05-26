@@ -73,6 +73,9 @@ export class UsageTracker {
     this.summary.opencode.calls += numeric(usage.calls);
     this.summary.opencode.websearch_calls += numeric(usage.websearchCalls);
     this.summary.opencode.webfetch_calls += numeric(usage.webfetchCalls);
+    if (usage.tokensUnavailable) {
+      this.summary.opencode.tokensUnavailable = true;
+    }
     this.summary.opencode.tokens.total += numeric(usage.tokens?.total);
     this.summary.opencode.tokens.input += numeric(usage.tokens?.input);
     this.summary.opencode.tokens.output += numeric(usage.tokens?.output);

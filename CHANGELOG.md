@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added real Xiaomi researcher extraction per search task, enabled by default with `--researcher-mode extract`.
+- Added non-fatal researcher fallback to mechanical claims when extraction fails or returns malformed JSON.
+- Hardened planner parsing with invalid/missing focus coercion and deterministic fallback plans.
+- Added Xiaomi report review QA artifacts: `report_review.json` and `report_review.md`.
+- Added OpenCode usage summary improvements for calls, websearch/webfetch calls, and unavailable early-exit tokens.
+- Added `--notify` for best-effort success/failure audio notifications.
+- Updated gitignore and committed reusable prompt fixtures for smoke/follow-up runs.
 - Added `--search-provider <opencode-web|xiaomi-native>` with `opencode-web` as the default.
 - Added OpenCode JSON event parsing, websearch output parsing, OpenCode usage aggregation, and provider events.
 - Kept Xiaomi native Web Search as an experimental provider with a clear `webSearchEnabled is false` error.

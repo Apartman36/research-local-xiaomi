@@ -94,6 +94,7 @@ export class OpenCodeEventParser {
   }
 
   result(extra?: { earlyExit?: boolean }): SearchProviderResult {
+    const tokensUnavailable = Boolean(extra?.earlyExit) && this.tokens.total === 0 && this.websearchCalls > 0;
     return {
       taskId: this.options.taskId,
       query: this.options.query,
@@ -107,6 +108,7 @@ export class OpenCodeEventParser {
         calls: 1,
         websearchCalls: this.websearchCalls,
         webfetchCalls: this.webfetchCalls,
+        ...(tokensUnavailable ? { tokensUnavailable } : {}),
         tokens: this.tokens
       }
     };

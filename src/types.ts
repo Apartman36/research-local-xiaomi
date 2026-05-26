@@ -1,8 +1,9 @@
 export type ResearchFocus = "web" | "github";
 export type ResearchProfileName = "smoke5" | "normal100" | "deep500";
 export type Confidence = "low" | "medium" | "high";
-export type Phase = "planner" | "researcher" | "critic" | "writer" | "smoke";
+export type Phase = "planner" | "researcher" | "critic" | "writer" | "reportReviewer" | "smoke";
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
+export type ResearcherMode = "extract" | "mechanical";
 
 export type ResearchProfile = {
   name: ResearchProfileName;
@@ -21,6 +22,7 @@ export type RoleModels = {
   researcher: string;
   critic: string;
   writer: string;
+  reportReviewer: string;
 };
 
 export type RoleTokenLimits = {
@@ -28,6 +30,7 @@ export type RoleTokenLimits = {
   researcher: number;
   critic: number;
   writer: number;
+  reportReviewer: number;
 };
 
 export type RunConfig = {
@@ -46,6 +49,9 @@ export type RunConfig = {
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
   maxTasks?: number;
+  researcherMode: ResearcherMode;
+  reviewReport: boolean;
+  notify: boolean;
   dryRun: boolean;
   verbose: boolean;
   startedAt: string;
@@ -101,6 +107,12 @@ export type Finding = {
   assistantSynthesis: string;
   annotations: NormalizedAnnotation[];
   claims: EvidenceClaim[];
+  extractionMode?: "xiaomi" | "fallback" | "mechanical";
+  warnings?: string[];
+  parseFailed?: boolean;
+  parseError?: string;
+  extractionError?: string;
+  unmatchedSourceRefs?: string[];
   usage?: XiaomiUsage;
   error?: string;
 };
@@ -142,6 +154,33 @@ export type Critique = {
   duplicateEvidence: string[];
   followUpTasks: SearchTask[];
   needsFollowUp: boolean;
+};
+
+export type ReportReview = {
+  overallAssessment: string;
+  qualityScore: number;
+  citationAssessment: {
+    hasUnsupportedClaims: boolean;
+    unsupportedClaims: Array<{
+      claim: string;
+      reason: string;
+      suggestedFix?: string;
+    }>;
+    citationCoverage: string;
+  };
+  sourceQuality: {
+    strongSources: string[];
+    weakSources: string[];
+    marketingHeavy: boolean;
+    notes: string;
+  };
+  gaps: Array<{
+    gap: string;
+    whyItMatters: string;
+    suggestedFollowUpQuery?: string;
+  }>;
+  recommendations: string[];
+  readyForUse: boolean;
 };
 
 export type XiaomiUsage = {
@@ -192,6 +231,7 @@ export type UsageSummary = {
       cache_read: number;
       cache_write: number;
     };
+    tokensUnavailable?: boolean;
     cost: null;
   };
   sources: {

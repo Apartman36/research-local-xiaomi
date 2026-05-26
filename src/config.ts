@@ -6,7 +6,7 @@ import { deep500 } from "./profiles/deep500.js";
 import { normal100 } from "./profiles/normal100.js";
 import { smoke5 } from "./profiles/smoke5.js";
 import { DEFAULT_OPENCODE_MODEL } from "./search/search-provider.js";
-import type { ResearchFocus, ResearchProfile, ResearchProfileName, RoleTokenLimits, RunConfig } from "./types.js";
+import type { ResearchFocus, ResearchProfile, ResearchProfileName, ResearcherMode, RoleTokenLimits, RunConfig } from "./types.js";
 
 dotenv.config({ quiet: true });
 
@@ -26,6 +26,9 @@ const runOptionsSchema = z.object({
   model: z.string().default(DEFAULT_MODEL),
   focus: z.enum(["web", "github"]).default("web"),
   searchProvider: z.enum(["opencode-web", "xiaomi-native"]).default("opencode-web"),
+  researcherMode: z.enum(["extract", "mechanical"]).default("extract"),
+  reviewReport: z.boolean().default(true),
+  notify: z.boolean().default(false),
   outputDir: z.string().default("./runs"),
   maxOutputTokens: z.coerce.number().int().positive().optional(),
   maxTasks: z.coerce.number().int().positive().optional(),
@@ -61,12 +64,14 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     planner: 4000,
     researcher: 6000,
     critic: 4000,
-    writer: parsed.maxOutputTokens ?? 16000
+    writer: parsed.maxOutputTokens ?? 16000,
+    reportReviewer: 4000
   };
   if (parsed.maxOutputTokens) {
     roleTokens.planner = Math.min(parsed.maxOutputTokens, roleTokens.planner);
     roleTokens.researcher = Math.min(parsed.maxOutputTokens, roleTokens.researcher);
     roleTokens.critic = Math.min(parsed.maxOutputTokens, roleTokens.critic);
+    roleTokens.reportReviewer = Math.min(parsed.maxOutputTokens, roleTokens.reportReviewer);
   }
 
   return {
@@ -85,11 +90,15 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
       planner: parsed.model,
       researcher: parsed.model,
       critic: parsed.model,
-      writer: parsed.model
+      writer: parsed.model,
+      reportReviewer: parsed.model
     },
     maxOutputTokens: roleTokens,
     concurrency: Math.min(parsed.concurrency, profile.maxConcurrentSearches),
     maxTasks: parsed.maxTasks,
+    researcherMode: parsed.researcherMode as ResearcherMode,
+    reviewReport: parsed.reviewReport,
+    notify: parsed.notify,
     dryRun: parsed.dryRun,
     verbose: parsed.verbose,
     startedAt: new Date().toISOString()

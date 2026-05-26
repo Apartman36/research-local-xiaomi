@@ -25,5 +25,35 @@ describe("search provider config", () => {
 
     expect(config.searchProvider).toBe("xiaomi-native");
   });
-});
 
+  it("defaults researcher extraction and report review to enabled", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({ file: promptPath });
+
+    expect(config.researcherMode).toBe("extract");
+    expect(config.reviewReport).toBe(true);
+    expect(config.notify).toBe(false);
+  });
+
+  it("accepts mechanical researcher mode and notify", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({ file: promptPath, researcherMode: "mechanical", notify: true });
+
+    expect(config.researcherMode).toBe("mechanical");
+    expect(config.notify).toBe(true);
+  });
+
+  it("rejects invalid researcher mode", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    await expect(buildRunConfig({ file: promptPath, researcherMode: "fast" as never })).rejects.toThrow();
+  });
+});
