@@ -33,6 +33,7 @@ const runOptionsSchema = z.object({
   maxOutputTokens: z.coerce.number().int().positive().optional(),
   maxTasks: z.coerce.number().int().positive().optional(),
   opencodeTimeoutMs: z.coerce.number().int().positive().default(180_000),
+  opencodeRetries: z.coerce.number().int().min(0).max(5).default(2),
   concurrency: z.coerce.number().int().positive().default(3),
   dryRun: z.boolean().default(false),
   verbose: z.boolean().default(false)
@@ -86,6 +87,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     model: parsed.model,
     opencodeModel: process.env.OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL,
     opencodeTimeoutMs: parsed.opencodeTimeoutMs,
+    opencodeRetries: parsed.opencodeRetries,
     roleModels: {
       planner: parsed.model,
       researcher: parsed.model,

@@ -261,6 +261,7 @@ async function runResearchTasks(params: {
       task,
       searchProvider,
       opencodeTimeoutMs: params.config.opencodeTimeoutMs,
+      opencodeRetries: params.config.opencodeRetries,
       researcherMode: params.config.researcherMode,
       dryRun: params.config.dryRun,
       onEvent: (type, metadata) => params.events.log(type, metadata)

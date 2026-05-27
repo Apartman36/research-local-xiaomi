@@ -45,6 +45,7 @@ export type RunConfig = {
   model: string;
   opencodeModel: string;
   opencodeTimeoutMs: number;
+  opencodeRetries: number;
   roleModels: RoleModels;
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
@@ -221,8 +222,12 @@ export type UsageSummary = {
   };
   opencode: {
     calls: number;
+    attempts: number;
     websearch_calls: number;
     webfetch_calls: number;
+    retries: number;
+    failures: number;
+    last_error?: string;
     tokens: {
       total: number;
       input: number;

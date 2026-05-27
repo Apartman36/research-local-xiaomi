@@ -14,8 +14,12 @@ describe("UsageTracker", () => {
     tracker.addCall("reportReviewer", { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 });
     tracker.addOpenCodeUsage({
       calls: 2,
+      attempts: 3,
       websearchCalls: 2,
       webfetchCalls: 1,
+      retries: 1,
+      failures: 1,
+      lastError: "timeout",
       tokensUnavailable: true
     });
     tracker.addRawSources(10);
@@ -32,8 +36,12 @@ describe("UsageTracker", () => {
     expect(summary.xiaomi.total_tokens).toBe(48);
     expect(summary.opencode).toEqual({
       calls: 2,
+      attempts: 3,
       websearch_calls: 2,
       webfetch_calls: 1,
+      retries: 1,
+      failures: 1,
+      last_error: "timeout",
       tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 },
       tokensUnavailable: true,
       cost: null

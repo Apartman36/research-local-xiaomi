@@ -16,8 +16,83 @@ export class OpenCodeWebSearchProvider implements SearchProvider {
     }
     args.push(prompt);
 
-    return runOpenCode(args, request.timeoutMs ?? 180_000, request);
+    return runOpenCodeWithRetries({
+      args,
+      timeoutMs: request.timeoutMs ?? 180_000,
+      request,
+      runner: runOpenCode
+    });
   }
+}
+
+export type OpenCodeAttemptRunner = (
+  args: string[],
+  timeoutMs: number,
+  request: SearchProviderRequest,
+  attempt: number
+) => Promise<SearchProviderResult>;
+
+export async function runOpenCodeWithRetries(params: {
+  args: string[];
+  timeoutMs: number;
+  request: SearchProviderRequest;
+  runner?: OpenCodeAttemptRunner;
+  retryDelaysMs?: number[];
+}): Promise<SearchProviderResult> {
+  const runner = params.runner ?? runOpenCode;
+  const retries = clampRetries(params.request.retries);
+  const maxAttempts = retries + 1;
+  const retryDelaysMs = params.retryDelaysMs ?? [1000, 3000];
+  let failures = 0;
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await emit(params.request, "opencode_search_attempt_started", {
+      taskId: params.request.taskId,
+      query: params.request.query,
+      attempt,
+      maxAttempts
+    });
+    try {
+      const result = await runner(params.args, params.timeoutMs, params.request, attempt);
+      if (result.sources.length > 0) {
+        return withRetryUsage(result, { attempts: attempt, failures, lastError });
+      }
+      lastError = new Error("OpenCode websearch returned zero sources.");
+      failures += 1;
+    } catch (error) {
+      lastError = normalizeOpenCodeError(error);
+      if (isMissingBinaryError(error)) {
+        throw lastError;
+      }
+      failures += 1;
+    }
+
+    await emit(params.request, "opencode_search_attempt_failed", {
+      taskId: params.request.taskId,
+      query: params.request.query,
+      attempt,
+      maxAttempts,
+      error: safeError(lastError)
+    });
+
+    if (attempt < maxAttempts) {
+      const delayMs = retryDelaysMs[Math.min(attempt - 1, retryDelaysMs.length - 1)] ?? 3000;
+      await emit(params.request, "opencode_search_retry", {
+        taskId: params.request.taskId,
+        query: params.request.query,
+        attempt,
+        maxAttempts,
+        delayMs,
+        error: safeError(lastError)
+      });
+      await delay(delayMs);
+    }
+  }
+
+  throw new Error(
+    `OpenCode websearch failed after ${maxAttempts} attempts (${retries} retries). Last error: ${safeError(lastError)}`
+  );
 }
 
 export function buildPrompt(request: SearchProviderRequest): string {
@@ -79,7 +154,11 @@ function runOpenCode(args: string[], timeoutMs: number, request: SearchProviderR
       settled = true;
       clearTimeout(timeout);
       if (error.code === "ENOENT") {
-        reject(new Error("OpenCode is not installed or not on PATH. Install OpenCode, then rerun with --search-provider opencode-web."));
+        const missing = new Error(
+          "OpenCode is not installed or not on PATH. Install OpenCode, then rerun with --search-provider opencode-web."
+        ) as NodeJS.ErrnoException;
+        missing.code = "ENOENT";
+        reject(missing);
         return;
       }
       reject(error);
@@ -121,6 +200,63 @@ export function buildOpenCodeFailureMessage(
 
 function lastChars(value: string, count: number): string {
   return value.length > count ? value.slice(-count) : value;
+}
+
+function clampRetries(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 2;
+  }
+  return Math.min(5, Math.max(0, Math.trunc(value)));
+}
+
+function withRetryUsage(
+  result: SearchProviderResult,
+  stats: { attempts: number; failures: number; lastError?: Error }
+): SearchProviderResult {
+  return {
+    ...result,
+    usage: {
+      calls: result.usage?.calls ?? 1,
+      attempts: stats.attempts,
+      websearchCalls: result.usage?.websearchCalls,
+      webfetchCalls: result.usage?.webfetchCalls,
+      retries: Math.max(0, stats.attempts - 1),
+      failures: stats.failures,
+      ...(stats.lastError ? { lastError: safeError(stats.lastError) } : {}),
+      ...(result.usage?.tokensUnavailable ? { tokensUnavailable: result.usage.tokensUnavailable } : {}),
+      tokens: result.usage?.tokens
+    }
+  };
+}
+
+function normalizeOpenCodeError(error: unknown): Error {
+  if (isMissingBinaryError(error)) {
+    const missing = new Error(
+      "OpenCode is not installed or not on PATH. Install OpenCode, then rerun with --search-provider opencode-web."
+    ) as NodeJS.ErrnoException;
+    missing.code = "ENOENT";
+    return missing;
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function isMissingBinaryError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function emit(request: SearchProviderRequest, type: string, metadata: Record<string, unknown>): Promise<void> {
+  await request.onEvent?.(type, metadata);
+}
+
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function safeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function terminateChild(child: ChildProcess): void {

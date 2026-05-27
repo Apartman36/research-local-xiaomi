@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### v0.3 foundation
+
+- Added Codex decision-point research workflow docs in `docs/CODEX_RESEARCH_WORKFLOW.md`.
+- Added `.codex/skills/use-research-xm.md` for Codex operational guidance in this repo.
+- Added `prompts/dev-research-template.md` for targeted development research prompts.
+- Added lightweight knowledge seed files in `knowledge/research-log.md` and `knowledge/backlog.md`.
+- Added `--opencode-retries` with bounded OpenCode websearch retry support for unstable Wi-Fi.
+- Added OpenCode retry attempt/failure events and run summary retry diagnostics.
+
+### v0.2.1
+
 - Added `run_summary.md` as a compact human-friendly overview written after each run.
 - Added `research-xm summary <run>` with `latest` resolution and `--path`.
 - Improved final console output with summary path, researcher/report-reviewer calls, review readiness, quality score, and OpenCode early-exit token status.

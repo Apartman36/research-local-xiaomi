@@ -56,6 +56,7 @@ export async function runResearchTask(params: {
   task: SearchTask;
   searchProvider: SearchProvider;
   opencodeTimeoutMs?: number;
+  opencodeRetries?: number;
   researcherMode: ResearcherMode;
   dryRun: boolean;
   onEvent?: (type: string, metadata?: Record<string, unknown>) => Promise<void> | void;
@@ -71,7 +72,9 @@ export async function runResearchTask(params: {
       focus: params.task.focus,
       maxResults: params.profile.limit,
       model: params.model,
-      timeoutMs: params.opencodeTimeoutMs
+      timeoutMs: params.opencodeTimeoutMs,
+      retries: params.opencodeRetries,
+      onEvent: params.onEvent
     });
     const limitedProviderResult = {
       ...providerResult,

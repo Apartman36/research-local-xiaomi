@@ -7,6 +7,8 @@ export type SearchProviderRequest = {
   maxResults: number;
   model?: string;
   timeoutMs?: number;
+  retries?: number;
+  onEvent?: (type: string, metadata?: Record<string, unknown>) => Promise<void> | void;
 };
 
 export type SearchProviderSource = {
@@ -21,8 +23,12 @@ export type SearchProviderSource = {
 
 export type SearchProviderUsage = {
   calls: number;
+  attempts?: number;
   websearchCalls?: number;
   webfetchCalls?: number;
+  retries?: number;
+  failures?: number;
+  lastError?: string;
   tokensUnavailable?: boolean;
   tokens?: {
     total?: number;

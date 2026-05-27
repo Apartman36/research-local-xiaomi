@@ -2,7 +2,7 @@
 
 `research-local-xiaomi` is a personal local research CLI powered by Xiaomi MiMo chat plus a pluggable search provider. It reads a prompt, creates a run folder, plans the work, searches with OpenCode websearch by default, deduplicates sources, builds evidence, critiques gaps, writes an English Markdown report, reviews it, records usage and debug events, and writes a compact `run_summary.md`.
 
-Version `0.2.1` remains intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, and no browser automation. The usability upgrade adds a human-friendly run summary, a `summary` command, and self-audit documentation without implementing autonomous code modification.
+Version `0.3` foundation remains intentionally small: standalone TypeScript, CLI-only, no database, no embeddings, no browser automation, and no autonomous code modification. The new workflow treats Codex as the developer and `research-xm` as a decision-point research oracle.
 
 ## What It Is Not
 
@@ -49,7 +49,20 @@ The API key is never written to run artifacts.
 For the first real OpenCode integration test, use the tiny smoke profile and one researcher task:
 
 ```powershell
-pnpm research-xm run --file .\prompts\interior-design-3d-ai-smoke.md --profile smoke5 --focus web --search-provider opencode-web --max-tasks 1 --opencode-timeout-ms 60000 --researcher-mode extract --notify --verbose
+corepack pnpm research-xm run `
+  --file .\prompts\interior-design-3d-ai-smoke.md `
+  --profile smoke5 `
+  --focus web `
+  --search-provider opencode-web `
+  --max-tasks 1 `
+  --opencode-timeout-ms 60000 `
+  --opencode-retries 2 `
+  --concurrency 1 `
+  --researcher-mode extract `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
 ```
 
 Do not use `normal100` for the first integration test; it is intended for longer runs after `smoke5` works.
@@ -71,6 +84,41 @@ Useful example prompts are included:
 - `prompts/interior-design-github-smoke.md`
 - `prompts/geometry-preserving-followup.md`
 - `prompts/research-local-xiaomi-self-audit.md`
+- `prompts/dev-research-template.md`
+
+## Codex-Driven Research Workflow
+
+Use `research-xm` when Codex reaches a decision point: architecture choices, repeated failures, unfamiliar APIs, provider/library comparisons, current external information, best practices, similar open-source projects, or reviewer gaps. Do not run it for trivial edits, simple type errors, formatting, local-only known paths, or every N minutes by timer.
+
+Recommended files for future Codex sessions and human planning:
+
+- `docs/CODEX_RESEARCH_WORKFLOW.md`
+- `.codex/skills/use-research-xm.md`
+- `prompts/dev-research-template.md`
+- `knowledge/research-log.md`
+- `knowledge/backlog.md`
+
+Standard bounded development research command:
+
+```powershell
+corepack pnpm research-xm run `
+  --file .\prompts\dev-research\<topic>.md `
+  --profile normal100 `
+  --focus web `
+  --search-provider opencode-web `
+  --max-tasks 3 `
+  --opencode-timeout-ms 120000 `
+  --opencode-retries 2 `
+  --concurrency 1 `
+  --researcher-mode extract `
+  --review-report `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Read results in this order: `run_summary.md`, `report_review.md`, `report.md`, then `usage.json`/`events.jsonl` only when debugging.
 
 The default search provider is `opencode-web`:
 
@@ -155,6 +203,15 @@ The MVP does not clone repositories and does not use the GitHub API.
 
 `opencode-web` is the default. It spawns `opencode run --format json`, sets `OPENCODE_ENABLE_EXA=1` for the subprocess, and parses OpenCode JSON events from stdout. The provider is built around OpenCode's built-in `websearch` and `webfetch` event shapes; the current source collection prompt uses `websearch` only, extracts sources from completed tool output, deduplicates them, and writes artifacts itself. OpenCode websearch uses Exa through OpenCode; no separate Exa API key is required for this path.
 
+OpenCode search calls retry transient failures by default for unstable Wi-Fi:
+
+- default: `--opencode-retries 2`
+- range: `0` to `5`
+- retries on timeout, non-zero OpenCode exit, transient spawn errors, and zero extracted sources
+- does not retry a missing OpenCode binary (`ENOENT`)
+- retry attempt, retry, and failure events are written to `events.jsonl`
+- retry counts and last OpenCode error are surfaced in `usage.json`, final CLI output, and `run_summary.md` when available
+
 OpenCode must not write `sources.json`, `report.md`, or any other run artifact in this architecture. It returns stdout events only.
 
 `xiaomi-native` remains available as an experimental provider:
@@ -194,7 +251,7 @@ Internally the config has role model slots so separate planner/researcher/critic
 pnpm dev --help
 pnpm research-xm --help
 pnpm research-xm run --file .\prompts\my-research.md --profile normal100
-pnpm research-xm run --file .\prompts\my-research.md --profile smoke5 --max-tasks 1 --opencode-timeout-ms 60000
+pnpm research-xm run --file .\prompts\my-research.md --profile smoke5 --max-tasks 1 --opencode-timeout-ms 60000 --opencode-retries 2
 pnpm research-xm run --file .\prompts\my-research.md --profile deep500
 pnpm research-xm run --file .\prompts\my-research.md --model mimo-v2.5-pro
 pnpm research-xm run --file .\prompts\my-research.md --focus github
@@ -259,6 +316,7 @@ If `run_summary.md` is missing for an older or incomplete run, `research-xm summ
 - total Xiaomi calls and calls by phase
 - Xiaomi prompt, completion, and total tokens
 - OpenCode calls, websearch calls, webfetch calls, and token totals when present in OpenCode events
+- OpenCode attempts, retries, failures, and last error when present
 - `web_search_usage.tool_usage`
 - `web_search_usage.page_usage`
 - raw, unique, and report-used source counts
@@ -283,7 +341,11 @@ The CLI summary prints whether review artifacts exist and the reviewer's `readyF
 
 - `docs/PROJECT_OVERVIEW.md` summarizes the current architecture, providers, pipeline, artifacts, limitations, run sizes, and roadmap for future agents.
 - `docs/SELF_AUDIT_WORKFLOW.md` explains how to use research outputs to guide Codex patches safely without letting `research-xm` modify source code.
+- `docs/CODEX_RESEARCH_WORKFLOW.md` describes the Codex-driven decision-point research loop.
+- `.codex/skills/use-research-xm.md` is the concise operational instruction file for Codex in this repo.
 - `prompts/research-local-xiaomi-self-audit.md` is a reusable prompt fixture for researching how to improve this project.
+- `prompts/dev-research-template.md` is the reusable development research prompt template.
+- `knowledge/research-log.md` and `knowledge/backlog.md` are lightweight human/agent-maintained knowledge seeds.
 
 ## Notifications
 
@@ -315,7 +377,7 @@ The citation linter checks that every citation number exists in `sources.json`. 
 
 The tool keeps normalized artifacts that are useful for debugging without archiving complete provider responses. `events.jsonl`, `findings/*.json`, `sources.json`, `evidence.json`, and `usage.json` preserve the important operational and research state while reducing privacy and storage risk.
 
-## Limitations Of v0.2
+## Limitations Of v0.3 Foundation
 
 - CLI-only.
 - OpenCode websearch is required for default real search runs.
@@ -330,8 +392,9 @@ The tool keeps normalized artifacts that are useful for debugging without archiv
 - Source extraction depends on selected provider results being present.
 - Citation repair is best effort; lint warnings are not hidden.
 - The report reviewer is QA only; it does not revise `report.md`.
-- v0.2 does not implement a research-to-backlog knowledge loop.
-- v0.2.1 adds run summaries and self-audit docs, but still does not implement autonomous self-modification.
+- Knowledge files are human/agent-maintained seeds; there is no automated knowledge append stage yet.
+- The Codex research workflow is controlled and decision-point based; it does not implement autonomous self-modification.
+- `research-xm` never edits source code or creates commits.
 
 ## Why Embeddings Are Not Included Yet
 
@@ -387,6 +450,8 @@ That is expected. OpenCode is not supposed to write files in this architecture. 
 - Embeddings for semantic deduplication, clustering, cross-run search, and persistent knowledge base workflows.
 - Stronger citation repair pass.
 - Richer source-type ranking.
+- Chunked/section writer for large source counts.
+- Optional insights/backlog extraction stage.
 
 ## GitHub Remote
 

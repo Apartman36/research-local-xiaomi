@@ -14,6 +14,26 @@ describe("search provider config", () => {
 
     expect(config.searchProvider).toBe("opencode-web");
     expect(config.opencodeModel).toBe("xiaomi-token-plan-sgp/mimo-v2.5-pro");
+    expect(config.opencodeRetries).toBe(2);
+  });
+
+  it("accepts bounded OpenCode retries", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({ file: promptPath, opencodeRetries: "5" });
+
+    expect(config.opencodeRetries).toBe(5);
+  });
+
+  it("rejects invalid OpenCode retries", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    await expect(buildRunConfig({ file: promptPath, opencodeRetries: "-1" })).rejects.toThrow();
+    await expect(buildRunConfig({ file: promptPath, opencodeRetries: "6" })).rejects.toThrow();
   });
 
   it("accepts xiaomi-native", async () => {

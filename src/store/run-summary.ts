@@ -30,8 +30,17 @@ type RunSummaryContext = {
   evidence?: any;
   review?: ReportReview;
   lint?: CitationLintResult;
+  opencodeDiagnostics: OpenCodeDiagnostics;
   existingArtifacts: Set<string>;
   missingArtifacts: string[];
+};
+
+type OpenCodeDiagnostics = {
+  attempts?: number;
+  retries?: number;
+  failures?: number;
+  lastError?: string;
+  successfulCalls?: number;
 };
 
 export function getRunSummaryPath(runDir: string): string {
@@ -69,13 +78,14 @@ export async function listRunArtifacts(runDir: string): Promise<string[]> {
 }
 
 async function loadRunSummaryContext(runDir: string): Promise<RunSummaryContext> {
-  const [config, usage, sources, evidence, review, report, existingFiles] = await Promise.all([
+  const [config, usage, sources, evidence, review, report, eventsText, existingFiles] = await Promise.all([
     readOptionalJson(path.join(runDir, "config.json")),
     readOptionalJson<UsageSummary>(path.join(runDir, "usage.json")),
     readOptionalJson<Source[]>(path.join(runDir, "sources.json")),
     readOptionalJson(path.join(runDir, "evidence.json")),
     readOptionalJson<ReportReview>(path.join(runDir, "report_review.json")),
     readOptionalText(path.join(runDir, "report.md")),
+    readOptionalText(path.join(runDir, "events.jsonl")),
     listRunArtifacts(runDir)
   ]);
   const existingArtifacts = new Set(existingFiles.map((file) => file.split(/[\\/]/)[0] ?? file));
@@ -91,6 +101,7 @@ async function loadRunSummaryContext(runDir: string): Promise<RunSummaryContext>
     evidence,
     review,
     lint,
+    opencodeDiagnostics: buildOpenCodeDiagnostics(usage, eventsText),
     existingArtifacts,
     missingArtifacts
   };
@@ -106,6 +117,7 @@ function renderRunSummary(context: RunSummaryContext): string {
   const deduplicated = rawSources === undefined || uniqueSources === undefined ? undefined : Math.max(0, rawSources - uniqueSources);
   const topDomains = summarizeTopDomains(context.sources ?? []);
   const nextActions = buildNextActions(context);
+  const opencode = context.opencodeDiagnostics;
 
   return [
     "# Research Run Summary",
@@ -150,6 +162,11 @@ function renderRunSummary(context: RunSummaryContext): string {
     `- Xiaomi prompt tokens: ${value(usage?.xiaomi.prompt_tokens ?? usage?.prompt_tokens)}`,
     `- Xiaomi completion tokens: ${value(usage?.xiaomi.completion_tokens ?? usage?.completion_tokens)}`,
     `- OpenCode calls: ${value(usage?.opencode.calls)}`,
+    `- OpenCode attempts: ${value(opencode.attempts)}`,
+    `- OpenCode successful calls: ${value(opencode.successfulCalls ?? usage?.opencode.calls)}`,
+    `- OpenCode retries: ${value(opencode.retries)}`,
+    `- OpenCode failures: ${value(opencode.failures)}`,
+    `- Last OpenCode error: ${value(opencode.lastError)}`,
     `- OpenCode websearch calls: ${value(usage?.opencode.websearch_calls)}`,
     `- OpenCode webfetch calls: ${value(usage?.opencode.webfetch_calls)}`,
     `- OpenCode tokens: ${formatOpenCodeTokens(usage)}`,
@@ -281,7 +298,11 @@ function formatOpenCodeTokens(usage: UsageSummary | undefined): string {
 }
 
 function phaseCalls(usage: UsageSummary | undefined, phase: string): string {
-  return value(usage?.callsByPhase?.[phase]);
+  const calls = usage?.callsByPhase?.[phase];
+  if (typeof calls === "number") {
+    return String(calls);
+  }
+  return "0 / not reached";
 }
 
 function value(input: unknown): string {
@@ -305,6 +326,65 @@ function numeric(...values: unknown[]): number | undefined {
     }
   }
   return undefined;
+}
+
+function buildOpenCodeDiagnostics(usage: UsageSummary | undefined, eventsText: string | undefined): OpenCodeDiagnostics {
+  let eventAttempts = 0;
+  let eventRetries = 0;
+  let eventFailures = 0;
+  let eventSuccessfulCalls = 0;
+  let eventLastError: string | undefined;
+  const diagnostics: OpenCodeDiagnostics = {
+    attempts: numeric(usage?.opencode.attempts),
+    retries: numeric(usage?.opencode.retries),
+    failures: numeric(usage?.opencode.failures),
+    lastError: usage?.opencode.last_error,
+    successfulCalls: numeric(usage?.opencode.calls)
+  };
+  if (!eventsText) {
+    return diagnostics;
+  }
+  for (const line of eventsText.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (event.type === "opencode_search_attempt_started") {
+      eventAttempts += 1;
+    } else if (event.type === "opencode_search_retry") {
+      eventRetries += 1;
+      eventLastError = stringValue(event.error) ?? eventLastError;
+    } else if (event.type === "opencode_search_attempt_failed") {
+      eventFailures += 1;
+      eventLastError = stringValue(event.error) ?? eventLastError;
+    } else if (event.type === "opencode_search_completed") {
+      eventSuccessfulCalls += 1;
+    } else if (event.type === "opencode_search_failed") {
+      eventLastError = stringValue(event.error) ?? eventLastError;
+    }
+  }
+  diagnostics.attempts = maxDefined(diagnostics.attempts, eventAttempts);
+  diagnostics.retries = maxDefined(diagnostics.retries, eventRetries);
+  diagnostics.failures = maxDefined(diagnostics.failures, eventFailures);
+  diagnostics.successfulCalls = maxDefined(diagnostics.successfulCalls, eventSuccessfulCalls);
+  diagnostics.lastError = diagnostics.lastError ?? eventLastError;
+  return diagnostics;
+}
+
+function maxDefined(existing: number | undefined, derived: number): number | undefined {
+  if (existing === undefined && derived === 0) {
+    return undefined;
+  }
+  return Math.max(existing ?? 0, derived);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function isMissingFileError(error: unknown): boolean {

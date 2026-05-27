@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenCodeFailureMessage, buildPrompt } from "../src/search/opencode-websearch.js";
+import {
+  buildOpenCodeFailureMessage,
+  buildPrompt,
+  runOpenCodeWithRetries,
+  type OpenCodeAttemptRunner
+} from "../src/search/opencode-websearch.js";
 
 describe("OpenCode websearch adapter", () => {
   it("builds the known-working single-line websearch prompt", () => {
@@ -46,4 +51,113 @@ describe("OpenCode websearch adapter", () => {
     expect(message).not.toContain("a".repeat(2100));
     expect(message).not.toContain("b".repeat(2100));
   });
+
+  it("retries timeout-like failures and returns the first successful result", async () => {
+    const attempts: number[] = [];
+    const events: Array<{ type: string; metadata?: Record<string, unknown> }> = [];
+    const runner: OpenCodeAttemptRunner = async (_args, _timeoutMs, request, attempt) => {
+      attempts.push(attempt);
+      if (attempt === 1) {
+        throw new Error("OpenCode websearch timed out.");
+      }
+      return {
+        taskId: request.taskId,
+        query: request.query,
+        provider: "opencode-web",
+        sources: [{ provider: "opencode-web", query: request.query, url: "https://example.com" }],
+        usage: { calls: 1, websearchCalls: 1, webfetchCalls: 0 }
+      };
+    };
+
+    const result = await runOpenCodeWithRetries({
+      args: ["run"],
+      timeoutMs: 100,
+      request: request({
+        retries: 2,
+        onEvent: (type, metadata) => {
+          events.push({ type, metadata });
+        }
+      }),
+      runner,
+      retryDelaysMs: [0, 0]
+    });
+
+    expect(attempts).toEqual([1, 2]);
+    expect(result.sources).toHaveLength(1);
+    expect(result.usage).toMatchObject({ calls: 1, attempts: 2, retries: 1, failures: 1, websearchCalls: 1 });
+    expect(events.map((event) => event.type)).toEqual([
+      "opencode_search_attempt_started",
+      "opencode_search_attempt_failed",
+      "opencode_search_retry",
+      "opencode_search_attempt_started"
+    ]);
+  });
+
+  it("retries zero-source results before returning success", async () => {
+    const runner: OpenCodeAttemptRunner = async (_args, _timeoutMs, request, attempt) => ({
+      taskId: request.taskId,
+      query: request.query,
+      provider: "opencode-web",
+      sources: attempt === 1 ? [] : [{ provider: "opencode-web", query: request.query, url: "https://example.com/a" }],
+      usage: { calls: 1, websearchCalls: 1, webfetchCalls: 0 }
+    });
+
+    const result = await runOpenCodeWithRetries({
+      args: ["run"],
+      timeoutMs: 100,
+      request: request({ retries: 2 }),
+      runner,
+      retryDelaysMs: [0, 0]
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.usage).toMatchObject({ calls: 1, attempts: 2, retries: 1, failures: 1 });
+  });
+
+  it("does not retry a missing OpenCode binary", async () => {
+    let attempts = 0;
+    const runner: OpenCodeAttemptRunner = async () => {
+      attempts += 1;
+      const error = new Error("not found") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+
+    await expect(
+      runOpenCodeWithRetries({
+        args: ["run"],
+        timeoutMs: 100,
+        request: request({ retries: 2 }),
+        runner,
+        retryDelaysMs: [0, 0]
+      })
+    ).rejects.toThrow(/not installed|not found/i);
+    expect(attempts).toBe(1);
+  });
+
+  it("throws the final error with retry context when all attempts fail", async () => {
+    const runner: OpenCodeAttemptRunner = async () => {
+      throw new Error("OpenCode websearch failed with exit code 1.");
+    };
+
+    await expect(
+      runOpenCodeWithRetries({
+        args: ["run"],
+        timeoutMs: 100,
+        request: request({ retries: 2 }),
+        runner,
+        retryDelaysMs: [0, 0]
+      })
+    ).rejects.toThrow(/failed after 3 attempts/i);
+  });
 });
+
+function request(overrides: Partial<Parameters<typeof runOpenCodeWithRetries>[0]["request"]> = {}) {
+  return {
+    taskId: "T001",
+    query: "query",
+    focus: "web" as const,
+    maxResults: 5,
+    ...overrides
+  };
+}

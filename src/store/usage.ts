@@ -29,8 +29,11 @@ export class UsageTracker {
       },
       opencode: {
         calls: 0,
+        attempts: 0,
         websearch_calls: 0,
         webfetch_calls: 0,
+        retries: 0,
+        failures: 0,
         tokens: {
           total: 0,
           input: 0,
@@ -71,8 +74,14 @@ export class UsageTracker {
       return;
     }
     this.summary.opencode.calls += numeric(usage.calls);
+    this.summary.opencode.attempts += numeric(usage.attempts, usage.calls);
     this.summary.opencode.websearch_calls += numeric(usage.websearchCalls);
     this.summary.opencode.webfetch_calls += numeric(usage.webfetchCalls);
+    this.summary.opencode.retries += numeric(usage.retries);
+    this.summary.opencode.failures += numeric(usage.failures);
+    if (usage.lastError) {
+      this.summary.opencode.last_error = usage.lastError;
+    }
     if (usage.tokensUnavailable) {
       this.summary.opencode.tokensUnavailable = true;
     }
@@ -109,6 +118,11 @@ export class UsageTracker {
   }
 }
 
-function numeric(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function numeric(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return 0;
 }

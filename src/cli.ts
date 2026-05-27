@@ -37,6 +37,7 @@ export function createProgram(): Command {
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
   .option("--max-tasks <n>", "cap researcher tasks after planning")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
+  .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
   .option("--concurrency <number>", "max concurrent researcher calls", "3")
   .option("--notify", "play a completion or failure sound")
   .option("--dry-run", "create artifacts without calling Xiaomi")
@@ -57,6 +58,7 @@ export function createProgram(): Command {
         maxOutputTokens: options.maxOutputTokens as string | undefined,
         maxTasks: options.maxTasks as string | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
+        opencodeRetries: options.opencodeRetries as string | undefined,
         concurrency: options.concurrency as string | undefined,
         notify: Boolean(options.notify),
         dryRun: Boolean(options.dryRun),
@@ -275,6 +277,12 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
   console.log(`Web search page usage: ${result.usage.web_search_usage.page_usage}`);
   if (result.searchProvider === "opencode-web") {
     console.log(`OpenCode calls: ${result.usage.opencode.calls}`);
+    console.log(`OpenCode attempts: ${result.usage.opencode.attempts}`);
+    console.log(`OpenCode retries: ${result.usage.opencode.retries}`);
+    console.log(`OpenCode failures: ${result.usage.opencode.failures}`);
+    if (result.usage.opencode.last_error) {
+      console.log(`Last OpenCode error: ${result.usage.opencode.last_error}`);
+    }
     console.log(`OpenCode websearch calls: ${result.usage.opencode.websearch_calls}`);
     console.log(`OpenCode webfetch calls: ${result.usage.opencode.webfetch_calls}`);
     if (result.usage.opencode.tokensUnavailable) {

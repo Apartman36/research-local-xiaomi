@@ -22,6 +22,10 @@ describe("run summary", () => {
     expect(markdown).toContain("- Report review qualityScore: 72");
     expect(markdown).toContain("- Xiaomi calls: 5");
     expect(markdown).toContain("- Researcher calls: 2");
+    expect(markdown).toContain("- OpenCode attempts: 3");
+    expect(markdown).toContain("- OpenCode retries: 1");
+    expect(markdown).toContain("- OpenCode failures: 1");
+    expect(markdown).toContain("- Last OpenCode error: timeout");
     expect(markdown).toContain("- OpenCode tokens: unavailable (early exit)");
     expect(markdown).toContain("## Report Review Summary");
     expect(markdown).toContain("- Investigate independent benchmarks");
@@ -53,6 +57,35 @@ describe("run summary", () => {
     expect(result.missingArtifacts).toContain("usage.json");
     expect(markdown).toContain("- Usage: missing");
     expect(markdown).toContain("- Partial run: yes");
+    expect(markdown).toContain("- Researcher calls: 0 / not reached");
+  });
+
+  it("derives OpenCode attempts from events when usage has no successful calls", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { reportReview: false });
+    const usage = JSON.parse(await readFile(path.join(runDir, "usage.json"), "utf8")) as UsageSummary;
+    usage.opencode.calls = 0;
+    usage.opencode.attempts = 0;
+    usage.opencode.retries = 0;
+    usage.opencode.failures = 0;
+    await writeFile(path.join(runDir, "usage.json"), JSON.stringify(usage), "utf8");
+    await writeFile(
+      path.join(runDir, "events.jsonl"),
+      [
+        JSON.stringify({ type: "opencode_search_started", taskId: "T001", query: "q" }),
+        JSON.stringify({ type: "opencode_search_attempt_started", taskId: "T001", query: "q", attempt: 1, maxAttempts: 3 }),
+        JSON.stringify({ type: "opencode_search_attempt_failed", taskId: "T001", query: "q", error: "timeout" })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- OpenCode attempts: 1");
+    expect(markdown).toContain("- OpenCode successful calls: 0");
+    expect(markdown).toContain("- OpenCode failures: 1");
+    expect(markdown).toContain("- Last OpenCode error: timeout");
   });
 
   it("returns the expected summary path", async () => {
@@ -94,8 +127,12 @@ async function writeCompleteArtifacts(runDir: string, options: { reportReview?: 
     xiaomi: { calls: 5, prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
     opencode: {
       calls: 2,
+      attempts: 3,
       websearch_calls: 2,
       webfetch_calls: 0,
+      retries: 1,
+      failures: 1,
+      last_error: "timeout",
       tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 },
       tokensUnavailable: true,
       cost: null
