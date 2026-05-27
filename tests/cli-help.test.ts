@@ -7,4 +7,10 @@ describe("CLI help", () => {
 
     expect(runCommand?.helpInformation()).toContain("--opencode-retries <n>");
   });
+
+  it("documents the safe follow-up prompt command", () => {
+    const followUpCommand = createProgram().commands.find((command) => command.name() === "follow-up");
+
+    expect(followUpCommand?.helpInformation()).toContain("--write-prompt-only");
+  });
 });

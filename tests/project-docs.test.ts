@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const expectedFiles = [
   "docs/CODEX_RESEARCH_WORKFLOW.md",
-  ".codex/skills/use-research-xm.md",
+  "docs/COMMANDS_REFERENCE.md",
+  ".codex/skills/use-research-xm/SKILL.md",
   "prompts/dev-research-template.md",
   "knowledge/research-log.md",
   "knowledge/backlog.md"

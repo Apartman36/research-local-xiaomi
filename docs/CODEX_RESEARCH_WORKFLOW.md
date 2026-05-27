@@ -4,6 +4,9 @@ This project uses `research-xm` as an external research oracle for Codex-driven 
 
 Core principle: run `research-xm` at decision points, not on a timer.
 
+The canonical Codex Agent Skill for this workflow is `.codex/skills/use-research-xm/SKILL.md`.
+Use `docs/COMMANDS_REFERENCE.md` for quick command syntax.
+
 ## When Codex Should Run Research
 
 Codex should consider running `research-xm` when:
@@ -43,6 +46,16 @@ Codex should not run `research-xm`:
 7. Run build, typecheck, and tests.
 8. Summarize which research run informed the patch.
 9. Commit only intended files.
+
+When the reviewer or critique identifies gaps, generate a follow-up prompt without starting a run:
+
+```powershell
+corepack pnpm research-xm follow-up latest --write-prompt-only
+```
+
+This writes `runs/<runId>/follow_up_prompt.md`. A human or Codex can inspect and edit that prompt before any new research run.
+
+Use Context7 MCP for current library/API documentation and examples when changing code against external packages. Context7 is not a replacement for `research-xm`: it answers library documentation questions, while `research-xm` produces sourced research artifacts and follow-up recommendations.
 
 ## Recommended Run Sizes
 
@@ -115,3 +128,6 @@ Read generated files in this order:
 - Do not expose `.env`, API keys, or secrets.
 - Do not create automatic commits from `research-xm`.
 - Do not add timer-based automation or background daemons for this workflow.
+- Inspect git status, recent log, unpushed commits, and the current branch before non-trivial edits.
+- Work on a feature branch for implementation patches.
+- Stage only intended files; never stage `.env`, `runs/`, zip archives, `.idea/`, or scratch artifacts.

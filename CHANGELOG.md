@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### v0.4 foundation
+
+- Added real Agent Skills-style `.codex/skills/use-research-xm/SKILL.md`.
+- Added `docs/COMMANDS_REFERENCE.md` as a concise command and option reference.
+- Added safe `research-xm follow-up <run> --write-prompt-only` prompt generation.
+- Updated README and workflow docs with Context7, follow-up prompt, and git/workflow safety expectations.
+
 ### v0.3 foundation
 
 - Added Codex decision-point research workflow docs in `docs/CODEX_RESEARCH_WORKFLOW.md`.

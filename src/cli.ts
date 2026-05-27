@@ -6,6 +6,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { buildRunConfig, DEFAULT_BASE_URL, DEFAULT_MODEL, requireApiKey } from "./config.js";
 import { lintCitations } from "./evidence/citation-linter.js";
+import { writeFollowUpPrompt } from "./follow-up/generate-follow-up-prompt.js";
 import { chat, chatWithWebSearch, extractAnnotations, extractUsage } from "./providers/xiaomi.js";
 import { runResearch } from "./orchestrator.js";
 import { generateRunSummary, getRunSummaryPath, listRunArtifacts } from "./store/run-summary.js";
@@ -174,7 +175,21 @@ export function createProgram(): Command {
     });
 
   program
-  .command("smoke")
+    .command("follow-up")
+    .description("Generate a focused follow-up prompt for a run.")
+    .argument("<run>", "run id or latest")
+    .requiredOption("--write-prompt-only", "write follow_up_prompt.md without starting a new run")
+    .option("--output-dir <path>", "run output root directory", "./runs")
+    .action(async (run: string, options: { outputDir: string; writePromptOnly?: boolean }) => {
+      try {
+        process.stdout.write(await printFollowUpCommand(run, { outputDir: options.outputDir, writePromptOnly: Boolean(options.writePromptOnly) }));
+      } catch (error) {
+        exitWithError(error);
+      }
+    });
+
+  program
+    .command("smoke")
   .description("Run a real Xiaomi API smoke test. Uses basic chat unless --web is passed.")
   .option("--web", "include Xiaomi Web Search")
   .option("--model <model>", "model to test", DEFAULT_MODEL)
@@ -240,6 +255,18 @@ export async function printSummaryCommand(
     return `${summary.markdown}\nRun is incomplete: usage.json not found.\nExisting files: ${existing}\n`;
   }
   return summary.markdown;
+}
+
+export async function printFollowUpCommand(
+  run: string,
+  options: { outputDir: string; writePromptOnly: boolean }
+): Promise<string> {
+  if (!options.writePromptOnly) {
+    throw new Error("--write-prompt-only is required; automatic follow-up execution is not implemented.");
+  }
+  const runDir = await resolveRun(path.resolve(options.outputDir), run);
+  const result = await writeFollowUpPrompt(runDir);
+  return `Follow-up prompt written: ${result.path}\n`;
 }
 
 if (isDirectExecution()) {
