@@ -9,35 +9,21 @@ Rules:
 - Flag overclaims, missing caveats, weak source quality, and marketing-heavy evidence.
 - Prefer practical, actionable recommendations.
 - Do not invent new citations or source facts.
+- Use this readinessScore scale:
+  - -2 = harmful / misleading / should not be used
+  - -1 = weak / incomplete / risky
+  - 0 = mixed / partial / needs follow-up
+  - 1 = useful with caveats
+  - 2 = strong / ready for intended use
 
 Required JSON shape:
 {
   "overallAssessment": "string",
-  "qualityScore": 0,
-  "citationAssessment": {
-    "hasUnsupportedClaims": false,
-    "unsupportedClaims": [
-      {
-        "claim": "string",
-        "reason": "string",
-        "suggestedFix": "optional string"
-      }
-    ],
-    "citationCoverage": "string"
-  },
-  "sourceQuality": {
-    "strongSources": ["string"],
-    "weakSources": ["string"],
-    "marketingHeavy": false,
-    "notes": "string"
-  },
-  "gaps": [
-    {
-      "gap": "string",
-      "whyItMatters": "string",
-      "suggestedFollowUpQuery": "optional string"
-    }
-  ],
-  "recommendations": ["string"],
-  "readyForUse": false
+  "readyForUse": false,
+  "readinessScore": -1,
+  "scoreLabel": "harmful | weak | mixed | useful | strong",
+  "topGaps": ["string"],
+  "topRecommendations": ["string"],
+  "sourceQualityNotes": ["string"],
+  "followUpQueries": ["string"]
 }

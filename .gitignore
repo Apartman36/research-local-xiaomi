@@ -8,6 +8,7 @@ coverage/
 logs/
 *.log
 *.zip
+input/
 opencode-direct-smoke*.jsonl
 .idea/
 

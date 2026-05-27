@@ -15,6 +15,7 @@ export async function runWriter(params: {
   sources: Source[];
   partial: boolean;
   dryRun: boolean;
+  timeoutMs?: number;
 }): Promise<{ report: string; usage?: XiaomiUsage }> {
   if (params.dryRun) {
     return { report: dryRunReport(params.plan, params.sources) };
@@ -26,6 +27,7 @@ export async function runWriter(params: {
     baseUrl: params.baseUrl,
     model: params.model,
     maxCompletionTokens: params.maxCompletionTokens,
+    timeoutMs: params.timeoutMs,
     messages: [
       { role: "system", content: system },
       {

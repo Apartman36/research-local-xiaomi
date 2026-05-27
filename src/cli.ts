@@ -8,7 +8,7 @@ import { buildRunConfig, DEFAULT_BASE_URL, DEFAULT_MODEL, requireApiKey } from "
 import { lintCitations } from "./evidence/citation-linter.js";
 import { writeFollowUpPrompt } from "./follow-up/generate-follow-up-prompt.js";
 import { chat, chatWithWebSearch, extractAnnotations, extractUsage } from "./providers/xiaomi.js";
-import { runResearch } from "./orchestrator.js";
+import { runResearch, type RunResult } from "./orchestrator.js";
 import { generateRunSummary, getRunSummaryPath, listRunArtifacts } from "./store/run-summary.js";
 import { listRuns, resolveRun } from "./store/run-store.js";
 import type { RunConfig, Source } from "./types.js";
@@ -39,6 +39,8 @@ export function createProgram(): Command {
   .option("--max-tasks <n>", "cap researcher tasks after planning")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
+  .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
+  .option("--writer-timeout-ms <ms>", "writer Xiaomi call timeout in milliseconds")
   .option("--concurrency <number>", "max concurrent researcher calls", "3")
   .option("--notify", "play a completion or failure sound")
   .option("--dry-run", "create artifacts without calling Xiaomi")
@@ -60,6 +62,8 @@ export function createProgram(): Command {
         maxTasks: options.maxTasks as string | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         opencodeRetries: options.opencodeRetries as string | undefined,
+        xiaomiTimeoutMs: options.xiaomiTimeoutMs as string | undefined,
+        writerTimeoutMs: options.writerTimeoutMs as string | undefined,
         concurrency: options.concurrency as string | undefined,
         notify: Boolean(options.notify),
         dryRun: Boolean(options.dryRun),
@@ -176,13 +180,30 @@ export function createProgram(): Command {
 
   program
     .command("follow-up")
-    .description("Generate a focused follow-up prompt for a run.")
+    .description("Generate or execute a focused follow-up prompt for a run.")
     .argument("<run>", "run id or latest")
-    .requiredOption("--write-prompt-only", "write follow_up_prompt.md without starting a new run")
+    .option("--write-prompt-only", "write follow_up_prompt.md without starting a new run")
+    .option("--execute", "execute a new child run from follow_up_prompt.md")
     .option("--output-dir <path>", "run output root directory", "./runs")
-    .action(async (run: string, options: { outputDir: string; writePromptOnly?: boolean }) => {
+    .option("--profile <smoke5|normal100|deep500>", "research profile", "normal100")
+    .option("--model <model>", "model for all roles", DEFAULT_MODEL)
+    .option("--focus <web|github>", "research focus mode", "web")
+    .option("--search-provider <opencode-web|xiaomi-native>", "search provider", "opencode-web")
+    .option("--researcher-mode <extract|mechanical>", "researcher extraction mode", "extract")
+    .option("--review-report", "write report_review.json and report_review.md QA artifacts", true)
+    .option("--no-review-report", "skip report review QA artifacts")
+    .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
+    .option("--max-tasks <n>", "cap researcher tasks after planning")
+    .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
+    .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
+    .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
+    .option("--writer-timeout-ms <ms>", "writer Xiaomi call timeout in milliseconds")
+    .option("--concurrency <number>", "max concurrent researcher calls", "3")
+    .option("--notify", "play a completion or failure sound")
+    .option("--verbose", "print debug event metadata")
+    .action(async (run: string, options: FollowUpCommandOptions) => {
       try {
-        process.stdout.write(await printFollowUpCommand(run, { outputDir: options.outputDir, writePromptOnly: Boolean(options.writePromptOnly) }));
+        process.stdout.write(await printFollowUpCommand(run, options));
       } catch (error) {
         exitWithError(error);
       }
@@ -259,15 +280,85 @@ export async function printSummaryCommand(
 
 export async function printFollowUpCommand(
   run: string,
-  options: { outputDir: string; writePromptOnly: boolean }
+  options: FollowUpCommandOptions,
+  deps: FollowUpCommandDeps = {}
 ): Promise<string> {
-  if (!options.writePromptOnly) {
-    throw new Error("--write-prompt-only is required; automatic follow-up execution is not implemented.");
+  const writePromptOnly = Boolean(options.writePromptOnly);
+  const execute = Boolean(options.execute);
+  if (writePromptOnly === execute) {
+    throw new Error("Exactly one of --write-prompt-only or --execute is required.");
   }
   const runDir = await resolveRun(path.resolve(options.outputDir), run);
   const result = await writeFollowUpPrompt(runDir);
-  return `Follow-up prompt written: ${result.path}\n`;
+  if (writePromptOnly) {
+    return `Follow-up prompt written: ${result.path}\n`;
+  }
+  const parentConfig = await readOptionalJson(path.join(runDir, "config.json"));
+  const parentDepth = typeof parentConfig?.followUpDepth === "number" ? parentConfig.followUpDepth : 0;
+  if (parentDepth >= 1) {
+    throw new Error("Follow-up execution is limited to depth 1 in this release.");
+  }
+  const config = await buildRunConfig({
+    inlinePrompt: result.prompt,
+    profile: options.profile as "smoke5" | "normal100" | "deep500" | undefined,
+    model: options.model,
+    focus: options.focus as "web" | "github" | undefined,
+    searchProvider: options.searchProvider as "opencode-web" | "xiaomi-native" | undefined,
+    researcherMode: options.researcherMode as "extract" | "mechanical" | undefined,
+    reviewReport: options.reviewReport,
+    outputDir: options.outputDir,
+    maxOutputTokens: options.maxOutputTokens,
+    maxTasks: options.maxTasks,
+    opencodeTimeoutMs: options.opencodeTimeoutMs,
+    opencodeRetries: options.opencodeRetries,
+    xiaomiTimeoutMs: options.xiaomiTimeoutMs,
+    writerTimeoutMs: options.writerTimeoutMs,
+    concurrency: options.concurrency,
+    notify: Boolean(options.notify),
+    verbose: Boolean(options.verbose),
+    parentRunId: path.basename(runDir),
+    followUpDepth: parentDepth + 1,
+    followUpReason: result.followUpReason,
+    gapsAddressed: result.gapsAddressed,
+    followUpPromptPath: result.path,
+    isFollowUpRun: true
+  });
+  const apiKey = deps.apiKey ?? requireApiKey();
+  const runWorkflow = deps.runWorkflow ?? runResearch;
+  const child = await runWorkflow(config, apiKey);
+  return [
+    `Follow-up prompt written: ${result.path}`,
+    `Follow-up run started: ${child.runId}`,
+    `Follow-up run directory: ${child.runDir}`,
+    ""
+  ].join("\n");
 }
+
+type FollowUpCommandOptions = {
+  outputDir: string;
+  writePromptOnly?: boolean;
+  execute?: boolean;
+  profile?: string;
+  model?: string;
+  focus?: string;
+  searchProvider?: string;
+  researcherMode?: string;
+  reviewReport?: boolean;
+  maxOutputTokens?: string;
+  maxTasks?: string;
+  opencodeTimeoutMs?: string;
+  opencodeRetries?: string;
+  xiaomiTimeoutMs?: string;
+  writerTimeoutMs?: string;
+  concurrency?: string;
+  notify?: boolean;
+  verbose?: boolean;
+};
+
+type FollowUpCommandDeps = {
+  runWorkflow?: (config: RunConfig, apiKey: string) => Promise<RunResult>;
+  apiKey?: string;
+};
 
 if (isDirectExecution()) {
   await createProgram().parseAsync(process.argv);
@@ -328,8 +419,14 @@ function formatReportReview(reportReview: Awaited<ReturnType<typeof runResearch>
   if (!reportReview) {
     return "no";
   }
-  const quality = typeof reportReview.qualityScore === "number" ? `, qualityScore: ${reportReview.qualityScore}` : "";
-  return `yes, readyForUse: ${reportReview.readyForUse}${quality}`;
+  const readiness =
+    typeof reportReview.readinessScore === "number"
+      ? `, readinessScore: ${reportReview.readinessScore} / ${reportReview.scoreLabel ?? "unlabeled"}`
+      : typeof reportReview.qualityScore === "number"
+        ? `, qualityScore: ${reportReview.qualityScore}`
+        : "";
+  const parsing = reportReview.parseFallback ? ", parsing: fallback" : "";
+  return `yes, readyForUse: ${reportReview.readyForUse}${readiness}${parsing}`;
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -339,6 +436,17 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch (error) {
     if (isMissingFileError(error)) {
       return false;
+    }
+    throw error;
+  }
+}
+
+async function readOptionalJson(filePath: string): Promise<any | undefined> {
+  try {
+    return await readJson(filePath);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
     }
     throw error;
   }

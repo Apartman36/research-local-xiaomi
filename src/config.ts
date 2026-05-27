@@ -34,9 +34,17 @@ const runOptionsSchema = z.object({
   maxTasks: z.coerce.number().int().positive().optional(),
   opencodeTimeoutMs: z.coerce.number().int().positive().default(180_000),
   opencodeRetries: z.coerce.number().int().min(0).max(5).default(2),
+  xiaomiTimeoutMs: z.coerce.number().int().min(1000).max(600_000).default(120_000),
+  writerTimeoutMs: z.coerce.number().int().min(1000).max(600_000).optional(),
   concurrency: z.coerce.number().int().positive().default(3),
   dryRun: z.boolean().default(false),
-  verbose: z.boolean().default(false)
+  verbose: z.boolean().default(false),
+  parentRunId: z.string().optional(),
+  followUpDepth: z.coerce.number().int().positive().optional(),
+  followUpReason: z.string().optional(),
+  gapsAddressed: z.array(z.string()).optional(),
+  followUpPromptPath: z.string().optional(),
+  isFollowUpRun: z.boolean().optional()
 });
 
 export type BuildRunConfigOptions = z.input<typeof runOptionsSchema>;
@@ -88,6 +96,8 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     opencodeModel: process.env.OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL,
     opencodeTimeoutMs: parsed.opencodeTimeoutMs,
     opencodeRetries: parsed.opencodeRetries,
+    xiaomiTimeoutMs: parsed.xiaomiTimeoutMs,
+    writerTimeoutMs: parsed.writerTimeoutMs,
     roleModels: {
       planner: parsed.model,
       researcher: parsed.model,
@@ -103,7 +113,13 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     notify: parsed.notify,
     dryRun: parsed.dryRun,
     verbose: parsed.verbose,
-    startedAt: new Date().toISOString()
+    startedAt: new Date().toISOString(),
+    parentRunId: parsed.parentRunId,
+    followUpDepth: parsed.followUpDepth,
+    followUpReason: parsed.followUpReason,
+    gapsAddressed: parsed.gapsAddressed,
+    followUpPromptPath: parsed.followUpPromptPath,
+    isFollowUpRun: parsed.isFollowUpRun
   };
 }
 

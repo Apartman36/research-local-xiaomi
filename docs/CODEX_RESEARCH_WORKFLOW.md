@@ -7,6 +7,14 @@ Core principle: run `research-xm` at decision points, not on a timer.
 The canonical Codex Agent Skill for this workflow is `.codex/skills/use-research-xm/SKILL.md`.
 Use `docs/COMMANDS_REFERENCE.md` for quick command syntax.
 
+Codex must be opened from the repository root to see repo-local skills:
+
+```text
+C:\Users\hustlePC\PycharmProjects\research-local-xiaomi
+```
+
+If `.codex/skills/use-research-xm/SKILL.md` or `docs/COMMANDS_REFERENCE.md` is missing, Codex is likely in the wrong workspace.
+
 ## When Codex Should Run Research
 
 Codex should consider running `research-xm` when:
@@ -51,9 +59,35 @@ When the reviewer or critique identifies gaps, generate a follow-up prompt witho
 
 ```powershell
 corepack pnpm research-xm follow-up latest --write-prompt-only
+
+[console]::beep(880,700)
 ```
 
 This writes `runs/<runId>/follow_up_prompt.md`. A human or Codex can inspect and edit that prompt before any new research run.
+
+To explicitly run a child follow-up:
+
+```powershell
+corepack pnpm research-xm follow-up latest `
+  --execute `
+  --profile normal100 `
+  --focus github `
+  --search-provider opencode-web `
+  --max-tasks 5 `
+  --opencode-timeout-ms 180000 `
+  --opencode-retries 2 `
+  --xiaomi-timeout-ms 120000 `
+  --writer-timeout-ms 300000 `
+  --concurrency 1 `
+  --researcher-mode extract `
+  --review-report `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+The child run config records parent/child lineage. Exactly one of `--write-prompt-only` or `--execute` is required.
 
 Use Context7 MCP for current library/API documentation and examples when changing code against external packages. Context7 is not a replacement for `research-xm`: it answers library documentation questions, while `research-xm` produces sourced research artifacts and follow-up recommendations.
 
@@ -117,6 +151,13 @@ Read generated files in this order:
 2. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
 3. `runs/<runId>/report.md` contains the full research result.
 4. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, and partial failures.
+
+Report reviews use `readinessScore` instead of future `qualityScore` values: `-2` harmful, `-1` weak, `0` mixed, `1` useful, `2` strong. Old `qualityScore` artifacts remain readable. If reviewer parsing fails, inspect `report_review_raw.txt`; the fallback score is `-1 / weak`.
+
+## Prompt Locations
+
+- `input/` is ignored scratch space for one-off local prompts.
+- `prompts/` contains reusable committed prompt fixtures.
 
 ## Safety Rules
 

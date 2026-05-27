@@ -56,6 +56,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     baseUrl: config.apiBaseUrl,
     model: config.roleModels.planner,
     maxCompletionTokens: config.maxOutputTokens.planner,
+    timeoutMs: config.xiaomiTimeoutMs,
     prompt: config.prompt,
     profile: config.profile,
     focus: config.focus,
@@ -102,7 +103,8 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     evidence,
     sources,
     focus: config.focus,
-    dryRun: config.dryRun
+    dryRun: config.dryRun,
+    timeoutMs: config.xiaomiTimeoutMs
   });
   usage.addCall("critic", criticResult.usage);
   await logCriticParseFallback(events, criticResult);
@@ -149,7 +151,8 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
         evidence,
         sources,
         focus: config.focus,
-        dryRun: config.dryRun
+        dryRun: config.dryRun,
+        timeoutMs: config.xiaomiTimeoutMs
       });
       usage.addCall("critic", criticResult.usage);
       await logCriticParseFallback(events, criticResult);
@@ -171,7 +174,8 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     critique: criticResult.critique,
     sources,
     partial: failedTasks > 0,
-    dryRun: config.dryRun
+    dryRun: config.dryRun,
+    timeoutMs: config.writerTimeoutMs ?? config.xiaomiTimeoutMs
   });
   usage.addCall("writer", writerResult.usage);
   await writeTextArtifact(config.runDir, "report.md", writerResult.report);
@@ -262,6 +266,7 @@ async function runResearchTasks(params: {
       searchProvider,
       opencodeTimeoutMs: params.config.opencodeTimeoutMs,
       opencodeRetries: params.config.opencodeRetries,
+      xiaomiTimeoutMs: params.config.xiaomiTimeoutMs,
       researcherMode: params.config.researcherMode,
       dryRun: params.config.dryRun,
       onEvent: (type, metadata) => params.events.log(type, metadata)
@@ -335,17 +340,24 @@ async function runReportReviewStage(params: {
       evidence: params.evidence,
       critique: params.critique,
       sources: params.sources,
-      dryRun: params.config.dryRun
+      dryRun: params.config.dryRun,
+      timeoutMs: params.config.xiaomiTimeoutMs
     });
     params.usage.addCall("reportReviewer", reviewResult.usage);
     if (reviewResult.parseFailed) {
       await params.events.log("report_review_failed", { error: reviewResult.parseError ?? "Report reviewer response could not be parsed." });
       await params.events.log("report_review_fallback_used");
+      if (reviewResult.rawContent) {
+        await writeTextArtifact(params.config.runDir, "report_review_raw.txt", reviewResult.rawContent);
+        reviewResult.review.rawOutputPath = path.join(params.config.runDir, "report_review_raw.txt");
+      }
     }
     await writeJsonArtifact(params.config.runDir, "report_review.json", reviewResult.review);
     await writeTextArtifact(params.config.runDir, "report_review.md", renderReportReviewMarkdown(reviewResult.review));
     await params.events.log("report_review_completed", {
       readyForUse: reviewResult.review.readyForUse,
+      readinessScore: reviewResult.review.readinessScore,
+      scoreLabel: reviewResult.review.scoreLabel,
       qualityScore: reviewResult.review.qualityScore
     });
     return reviewResult.review;
@@ -353,7 +365,13 @@ async function runReportReviewStage(params: {
     const reason = safeError(error);
     const review: ReportReview = {
       overallAssessment: `Report reviewer failed: ${reason}`,
-      qualityScore: 0,
+      readinessScore: -1,
+      scoreLabel: "weak",
+      topGaps: ["Report reviewer failed."],
+      topRecommendations: ["Review report artifacts manually."],
+      sourceQualityNotes: ["Source quality was not reviewed because the reviewer failed."],
+      followUpQueries: [],
+      parseFallback: true,
       citationAssessment: {
         hasUnsupportedClaims: false,
         unsupportedClaims: [],
@@ -365,7 +383,7 @@ async function runReportReviewStage(params: {
         marketingHeavy: false,
         notes: "Source quality was not reviewed because the reviewer failed."
       },
-      gaps: [],
+      gaps: [{ gap: "Report reviewer failed.", whyItMatters: "QA artifacts are incomplete." }],
       recommendations: ["Review report artifacts manually."],
       readyForUse: false
     };

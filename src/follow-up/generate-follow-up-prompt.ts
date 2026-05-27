@@ -30,6 +30,8 @@ export type WriteFollowUpPromptResult = {
   path: string;
   prompt: string;
   missingArtifacts: string[];
+  followUpReason: string;
+  gapsAddressed: string[];
 };
 
 export async function writeFollowUpPrompt(runDir: string): Promise<WriteFollowUpPromptResult> {
@@ -38,7 +40,13 @@ export async function writeFollowUpPrompt(runDir: string): Promise<WriteFollowUp
   const prompt = generateFollowUpPrompt(context);
   const promptPath = path.join(runDir, "follow_up_prompt.md");
   await writeTextArtifact(runDir, "follow_up_prompt.md", prompt);
-  return { path: promptPath, prompt, missingArtifacts: context.missingArtifacts };
+  return {
+    path: promptPath,
+    prompt,
+    missingArtifacts: context.missingArtifacts,
+    followUpReason: followUpReason(context),
+    gapsAddressed: topGaps(context)
+  };
 }
 
 export function generateFollowUpPrompt(context: FollowUpContext): string {
@@ -100,7 +108,7 @@ export function generateFollowUpPrompt(context: FollowUpContext): string {
     "## Prior Context Signals",
     "",
     `- Report review readyForUse: ${context.reportReview ? String(context.reportReview.readyForUse) : "unavailable"}`,
-    `- Report review qualityScore: ${context.reportReview?.qualityScore ?? "unavailable"}`,
+    `- Report review readinessScore: ${formatReviewScore(context.reportReview)}`,
     ...recommendations.map((item) => `- Recommendation: ${item}`),
     ...followUpTasks.map((task) => `- Critique follow-up task: ${task.query}`),
     ...nextActions.map((action) => `- Next suggested action: ${action}`),
@@ -178,6 +186,7 @@ function coveredAreas(context: FollowUpContext): string[] {
 
 function topGaps(context: FollowUpContext): string[] {
   const gaps = [
+    ...(context.reportReview?.topGaps ?? []),
     ...(context.reportReview?.gaps.map((gap) => gap.gap) ?? []),
     ...(context.critique?.missingCoverage ?? []),
     ...(context.critique?.weakAreas ?? [])
@@ -186,7 +195,7 @@ function topGaps(context: FollowUpContext): string[] {
 }
 
 function topRecommendations(context: FollowUpContext): string[] {
-  return unique(context.reportReview?.recommendations ?? []).slice(0, 5);
+  return unique([...(context.reportReview?.topRecommendations ?? []), ...(context.reportReview?.recommendations ?? [])]).slice(0, 5);
 }
 
 function topFollowUpTasks(context: FollowUpContext): SearchTask[] {
@@ -263,6 +272,16 @@ function unique(items: string[]): string[] {
 
 function oneLine(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function formatReviewScore(review: ReportReview | undefined): string {
+  if (!review) {
+    return "unavailable";
+  }
+  if (typeof review.readinessScore === "number") {
+    return `${review.readinessScore}${review.scoreLabel ? ` / ${review.scoreLabel}` : ""}`;
+  }
+  return review.qualityScore === undefined ? "unavailable" : `legacy qualityScore ${review.qualityScore}`;
 }
 
 function parseOptionalJson<T>(text: string | undefined): T | undefined {

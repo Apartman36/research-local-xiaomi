@@ -29,6 +29,7 @@ export class XiaomiNativeWebSearchProvider implements SearchProvider {
         baseUrl: this.params.baseUrl,
         model: request.model ?? "mimo-v2.5-pro",
         maxCompletionTokens: 2000,
+        timeoutMs: request.timeoutMs,
         maxKeyword: 3,
         limit: request.maxResults,
         messages
@@ -66,4 +67,3 @@ export class XiaomiNativeWebSearchProvider implements SearchProvider {
 export function isXiaomiNativeWebSearchDisabled(error: unknown): boolean {
   return normalizeXiaomiError(error).includes(DISABLED_MESSAGE);
 }
-

@@ -7,6 +7,11 @@
 - Added real Agent Skills-style `.codex/skills/use-research-xm/SKILL.md`.
 - Added `docs/COMMANDS_REFERENCE.md` as a concise command and option reference.
 - Added safe `research-xm follow-up <run> --write-prompt-only` prompt generation.
+- Added explicit `research-xm follow-up <run> --execute` child runs with parent lineage metadata.
+- Added `--xiaomi-timeout-ms` and `--writer-timeout-ms` for role call timeout control.
+- Replaced future report reviewer scoring with `readinessScore` on the `-2..2` scale while preserving old `qualityScore` display.
+- Hardened report reviewer parsing for fenced/prose-surrounded JSON and saved malformed raw output for fallback review inspection.
+- Documented `input/` as ignored scratch and `prompts/` as committed reusable prompt fixtures.
 - Updated README and workflow docs with Context7, follow-up prompt, and git/workflow safety expectations.
 
 ### v0.3 foundation

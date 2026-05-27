@@ -2,31 +2,50 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { chat, extractUsage } from "../providers/xiaomi.js";
-import type { Critique, EvidenceFile, Plan, ReportReview, Source, XiaomiUsage } from "../types.js";
-import { extractJsonObject, getAssistantContent } from "./json.js";
+import type { Critique, EvidenceFile, Plan, ReadinessScore, ReportReview, ScoreLabel, Source, XiaomiUsage } from "../types.js";
+import { getAssistantContent } from "./json.js";
 
 const reportReviewSchema = z.object({
   overallAssessment: z.string(),
-  qualityScore: z.coerce.number().min(0).max(100),
-  citationAssessment: z.object({
-    hasUnsupportedClaims: z.boolean(),
-    unsupportedClaims: z
-      .array(
-        z.object({
-          claim: z.string(),
-          reason: z.string(),
-          suggestedFix: z.string().optional()
-        })
-      )
-      .default([]),
-    citationCoverage: z.string()
-  }),
-  sourceQuality: z.object({
-    strongSources: z.array(z.string()).default([]),
-    weakSources: z.array(z.string()).default([]),
-    marketingHeavy: z.boolean(),
-    notes: z.string()
-  }),
+  readyForUse: z.boolean(),
+  readinessScore: z.coerce.number().int().transform((value) => clampReadinessScore(value)),
+  scoreLabel: z.enum(["harmful", "weak", "mixed", "useful", "strong"]).optional(),
+  topGaps: z.array(z.string()).default([]),
+  topRecommendations: z.array(z.string()).default([]),
+  sourceQualityNotes: z.array(z.string()).default([]),
+  followUpQueries: z.array(z.string()).default([]),
+  citationAssessment: z
+    .object({
+      hasUnsupportedClaims: z.boolean(),
+      unsupportedClaims: z
+        .array(
+          z.object({
+            claim: z.string(),
+            reason: z.string(),
+            suggestedFix: z.string().optional()
+          })
+        )
+        .default([]),
+      citationCoverage: z.string()
+    })
+    .default({
+      hasUnsupportedClaims: false,
+      unsupportedClaims: [],
+      citationCoverage: "Reviewer did not provide citationAssessment."
+    }),
+  sourceQuality: z
+    .object({
+      strongSources: z.array(z.string()).default([]),
+      weakSources: z.array(z.string()).default([]),
+      marketingHeavy: z.boolean(),
+      notes: z.string()
+    })
+    .default({
+      strongSources: [],
+      weakSources: [],
+      marketingHeavy: false,
+      notes: "Reviewer did not provide sourceQuality."
+    }),
   gaps: z
     .array(
       z.object({
@@ -37,7 +56,7 @@ const reportReviewSchema = z.object({
     )
     .default([]),
   recommendations: z.array(z.string()).default([]),
-  readyForUse: z.boolean()
+  qualityScore: z.coerce.number().min(0).max(100).optional()
 });
 
 export type ReportReviewerResult = {
@@ -45,12 +64,19 @@ export type ReportReviewerResult = {
   usage?: XiaomiUsage;
   parseFailed?: boolean;
   parseError?: string;
+  rawContent?: string;
 };
 
 export function fallbackReportReview(reason: string): ReportReview {
   return {
     overallAssessment: reason,
-    qualityScore: 0,
+    readinessScore: -1,
+    scoreLabel: "weak",
+    topGaps: ["Reviewer output could not be parsed."],
+    topRecommendations: ["Inspect report_review_raw.txt and rerun report review if needed."],
+    sourceQualityNotes: ["Source quality was not reviewed because reviewer output could not be parsed."],
+    followUpQueries: [],
+    parseFallback: true,
     citationAssessment: {
       hasUnsupportedClaims: false,
       unsupportedClaims: [],
@@ -62,20 +88,41 @@ export function fallbackReportReview(reason: string): ReportReview {
       marketingHeavy: false,
       notes: "Source quality was not reviewed because the reviewer failed."
     },
-    gaps: [],
-    recommendations: ["Review report.md, sources.json, evidence.json, and citation lint output manually."],
+    gaps: [
+      {
+        gap: "Reviewer output could not be parsed.",
+        whyItMatters: "Malformed QA output prevents reliable reviewer scoring.",
+        suggestedFollowUpQuery: "Inspect report_review_raw.txt and rerun report review if needed."
+      }
+    ],
+    recommendations: ["Inspect report_review_raw.txt and rerun report review if needed."],
     readyForUse: false
   };
 }
 
 export function parseReportReviewContent(content: string): ReportReviewerResult {
   try {
-    return { review: reportReviewSchema.parse(extractJsonObject(content)) };
+    const parsed = reportReviewSchema.parse(extractReportReviewJson(content));
+    const scoreLabel = parsed.scoreLabel ?? scoreLabelFor(parsed.readinessScore);
+    return {
+      review: {
+        ...parsed,
+        scoreLabel,
+        topGaps: parsed.topGaps.length > 0 ? parsed.topGaps : parsed.gaps.map((gap) => gap.gap),
+        topRecommendations: parsed.topRecommendations.length > 0 ? parsed.topRecommendations : parsed.recommendations,
+        sourceQualityNotes: parsed.sourceQualityNotes.length > 0 ? parsed.sourceQualityNotes : [parsed.sourceQuality.notes],
+        followUpQueries:
+          parsed.followUpQueries.length > 0
+            ? parsed.followUpQueries
+            : parsed.gaps.map((gap) => gap.suggestedFollowUpQuery).filter((query): query is string => Boolean(query))
+      }
+    };
   } catch (error) {
     return {
-      review: fallbackReportReview("Report reviewer returned malformed JSON."),
+      review: fallbackReportReview("Report reviewer returned malformed JSON. Raw output was saved for inspection."),
       parseFailed: true,
-      parseError: safeError(error)
+      parseError: safeError(error),
+      rawContent: content
     };
   }
 }
@@ -91,12 +138,18 @@ export async function runReportReviewer(params: {
   critique: Critique;
   sources: Source[];
   dryRun: boolean;
+  timeoutMs?: number;
 }): Promise<ReportReviewerResult> {
   if (params.dryRun) {
     return {
       review: {
         overallAssessment: "Dry-run review: artifacts are synthetic and not suitable for real use.",
-        qualityScore: 0,
+        readinessScore: -1,
+        scoreLabel: "weak",
+        topGaps: [],
+        topRecommendations: ["Run without --dry-run before using the report."],
+        sourceQualityNotes: ["No real source review was performed."],
+        followUpQueries: [],
         citationAssessment: {
           hasUnsupportedClaims: false,
           unsupportedClaims: [],
@@ -121,6 +174,7 @@ export async function runReportReviewer(params: {
     baseUrl: params.baseUrl,
     model: params.model,
     maxCompletionTokens: params.maxCompletionTokens,
+    timeoutMs: params.timeoutMs,
     messages: [
       { role: "system", content: system },
       {
@@ -167,9 +221,11 @@ export function renderReportReviewMarkdown(review: ReportReview): string {
 
 Overall assessment: ${review.overallAssessment}
 
-Quality score: ${review.qualityScore}
+Readiness score: ${formatReadiness(review)}
 
 Ready for use: ${review.readyForUse ? "yes" : "no"}
+
+${review.parseFallback ? `Parsing fallback: yes${review.rawOutputPath ? `\n\nRaw reviewer output: ${review.rawOutputPath}` : ""}\n` : ""}
 
 ## Citation Assessment
 
@@ -195,10 +251,101 @@ ${review.sourceQuality.weakSources.map((source) => `- ${source}`).join("\n") || 
 
 ${gaps || "- No gaps listed."}
 
+Top gaps:
+${(review.topGaps ?? []).map((gap) => `- ${gap}`).join("\n") || "- None listed."}
+
 ## Recommendations
 
 ${review.recommendations.map((recommendation) => `- ${recommendation}`).join("\n") || "- None listed."}
 `;
+}
+
+function extractReportReviewJson(content: string): unknown {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    throw new Error("Model returned empty content.");
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) {
+      return JSON.parse(fenced[1]);
+    }
+    const objectText = firstBalancedJsonObject(trimmed);
+    if (objectText) {
+      return JSON.parse(objectText);
+    }
+    throw new Error("Could not extract a JSON object from model content.");
+  }
+}
+
+function firstBalancedJsonObject(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    return undefined;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+  return undefined;
+}
+
+function clampReadinessScore(value: number): ReadinessScore {
+  if (value <= -2) {
+    return -2;
+  }
+  if (value >= 2) {
+    return 2;
+  }
+  return value as ReadinessScore;
+}
+
+function scoreLabelFor(score: ReadinessScore): ScoreLabel {
+  const labels: Record<ReadinessScore, ScoreLabel> = {
+    [-2]: "harmful",
+    [-1]: "weak",
+    0: "mixed",
+    1: "useful",
+    2: "strong"
+  };
+  return labels[score];
+}
+
+function formatReadiness(review: ReportReview): string {
+  if (typeof review.readinessScore === "number") {
+    return `${review.readinessScore} / ${review.scoreLabel ?? scoreLabelFor(review.readinessScore)}`;
+  }
+  if (typeof review.qualityScore === "number") {
+    return `legacy qualityScore ${review.qualityScore}`;
+  }
+  return "unavailable";
 }
 
 function safeError(error: unknown): string {

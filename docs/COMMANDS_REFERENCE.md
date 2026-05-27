@@ -11,6 +11,7 @@ research-xm show <run>
 research-xm validate <run>
 research-xm summary <run>
 research-xm follow-up <run> --write-prompt-only
+research-xm follow-up <run> --execute
 research-xm smoke
 ```
 
@@ -20,6 +21,7 @@ research-xm smoke
 - `validate <run>` checks report citations against `sources.json`.
 - `summary <run>` prints or generates `run_summary.md`.
 - `follow-up <run> --write-prompt-only` writes `follow_up_prompt.md` for a targeted next research run without executing it.
+- `follow-up <run> --execute` writes `follow_up_prompt.md` and starts a new child run with lineage metadata.
 - `smoke` tests Xiaomi chat, or Xiaomi native Web Search with `--web`.
 
 `<run>` may be `latest` or an explicit run ID.
@@ -78,7 +80,17 @@ research-xm smoke
 
 ## Report review
 
-`--review-report` writes `report_review.json` and `report_review.md`. The review includes `readyForUse`, quality score, source quality notes, gaps, and recommendations.
+`--review-report` writes `report_review.json` and `report_review.md`. The review includes `readyForUse`, `readinessScore`, source quality notes, gaps, and recommendations.
+
+`readinessScore` uses a small honest scale:
+
+- `-2`: harmful / misleading / should not be used
+- `-1`: weak / incomplete / risky
+- `0`: mixed / partial / needs follow-up
+- `1`: useful with caveats
+- `2`: strong / ready for intended use
+
+Old `qualityScore` artifacts still display in summaries for backward compatibility. If reviewer JSON parsing fails, `report_review_raw.txt` is saved and the fallback review uses `readinessScore: -1 / weak`.
 
 `--no-review-report` skips report QA artifacts for faster debugging.
 
@@ -87,6 +99,10 @@ research-xm smoke
 `--opencode-timeout-ms` controls the OpenCode subprocess timeout.
 
 `--opencode-retries` controls transient OpenCode search retries.
+
+`--xiaomi-timeout-ms` controls the default Xiaomi role timeout for planner, researcher extraction, critic, writer, and report reviewer.
+
+`--writer-timeout-ms` overrides the Xiaomi timeout for the writer only.
 
 Examples:
 
@@ -204,3 +220,51 @@ corepack pnpm research-xm follow-up latest --write-prompt-only
 ```
 
 This writes `runs/<run-id>/follow_up_prompt.md` and does not start a new run.
+
+### Follow-up execution
+
+```powershell
+corepack pnpm research-xm follow-up latest `
+  --execute `
+  --profile normal100 `
+  --focus github `
+  --search-provider opencode-web `
+  --max-tasks 5 `
+  --opencode-timeout-ms 180000 `
+  --opencode-retries 2 `
+  --xiaomi-timeout-ms 120000 `
+  --writer-timeout-ms 300000 `
+  --concurrency 1 `
+  --researcher-mode extract `
+  --review-report `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+This creates a child run under `runs/<child-run-id>/`. The child `config.json` contains `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`. Exactly one of `--write-prompt-only` or `--execute` is required.
+
+## Prompt locations
+
+`input/` is local scratch for one-off prompts and is ignored by git. `prompts/` contains reusable committed prompt fixtures.
+
+## Troubleshooting
+
+### Codex cannot see project skills
+
+Codex must start from the repository root:
+
+```text
+C:\Users\hustlePC\PycharmProjects\research-local-xiaomi
+```
+
+Check that `.codex/skills/use-research-xm/SKILL.md` and `docs/COMMANDS_REFERENCE.md` are visible. If not, Codex is likely in the wrong workspace.
+
+### Report reviewer returned malformed JSON
+
+Open `runs/<run-id>/report_review_raw.txt` and `runs/<run-id>/report_review.md`. The fallback review is conservative and uses `readinessScore: -1 / weak`.
+
+### OpenCode token accounting unavailable
+
+Early-exit OpenCode runs may not emit final token accounting. `usage.json` and `run_summary.md` report `OpenCode tokens: unavailable (early exit)` instead of treating zero as a real token count.

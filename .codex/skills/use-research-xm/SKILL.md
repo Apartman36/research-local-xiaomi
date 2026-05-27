@@ -34,6 +34,16 @@ Use:
 - Context7 MCP for fresh library/API documentation and code examples.
 - local repo inspection for facts about this codebase.
 
+Codex must be opened from the repository root to see this repo-local skill:
+
+```text
+C:\Users\hustlePC\PycharmProjects\research-local-xiaomi
+```
+
+If `.codex/skills/use-research-xm/SKILL.md` or `docs/COMMANDS_REFERENCE.md` is missing, Codex is likely in the wrong workspace.
+
+Treat `input/` as ignored scratch for one-off local prompts. Keep reusable prompt fixtures in committed `prompts/`.
+
 Do not confuse these:
 
 - Context7 gives current docs for libraries.
@@ -53,6 +63,8 @@ corepack pnpm research-xm run `
   --max-tasks 5 `
   --opencode-timeout-ms 180000 `
   --opencode-retries 2 `
+  --xiaomi-timeout-ms 120000 `
+  --writer-timeout-ms 300000 `
   --concurrency 1 `
   --researcher-mode extract `
   --review-report `
@@ -73,6 +85,7 @@ corepack pnpm research-xm run `
   --max-tasks 1 `
   --opencode-timeout-ms 60000 `
   --opencode-retries 2 `
+  --xiaomi-timeout-ms 120000 `
   --concurrency 1 `
   --researcher-mode extract `
   --review-report `
@@ -92,6 +105,42 @@ Read in this order:
 4. critique.json
 5. sources.json / evidence.json only if deeper diagnosis is needed
 6. events.jsonl / usage.json only if debugging
+
+Reviewer readiness uses `readinessScore`: -2 harmful, -1 weak, 0 mixed, 1 useful, 2 strong. If parsing falls back, inspect `report_review_raw.txt`.
+
+## Follow-up commands
+
+Safe prompt-only mode:
+
+```powershell
+corepack pnpm research-xm follow-up latest --write-prompt-only
+
+[console]::beep(880,700)
+```
+
+Explicit child execution mode:
+
+```powershell
+corepack pnpm research-xm follow-up latest `
+  --execute `
+  --profile normal100 `
+  --focus github `
+  --search-provider opencode-web `
+  --max-tasks 5 `
+  --opencode-timeout-ms 180000 `
+  --opencode-retries 2 `
+  --xiaomi-timeout-ms 120000 `
+  --writer-timeout-ms 300000 `
+  --concurrency 1 `
+  --researcher-mode extract `
+  --review-report `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Exactly one of `--write-prompt-only` or `--execute` is required. Child `config.json` records `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`.
 
 ## How to use findings
 

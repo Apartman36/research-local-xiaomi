@@ -52,6 +52,7 @@ export async function runPlanner(params: {
   profile: ResearchProfile;
   focus: ResearchFocus;
   dryRun: boolean;
+  timeoutMs?: number;
 }): Promise<PlannerResult> {
   if (params.dryRun) {
     return { plan: fallbackPlan(params.prompt, params.profile, params.focus, "Dry-run mode did not call Xiaomi.") };
@@ -67,6 +68,7 @@ export async function runPlanner(params: {
     baseUrl: params.baseUrl,
     model: params.model,
     maxCompletionTokens: params.maxCompletionTokens,
+    timeoutMs: params.timeoutMs,
     messages: [
       { role: "system", content: system },
       {

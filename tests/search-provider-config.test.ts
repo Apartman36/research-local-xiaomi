@@ -36,6 +36,30 @@ describe("search provider config", () => {
     await expect(buildRunConfig({ file: promptPath, opencodeRetries: "6" })).rejects.toThrow();
   });
 
+  it("accepts and persists Xiaomi role timeouts", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({
+      file: promptPath,
+      xiaomiTimeoutMs: "180000",
+      writerTimeoutMs: "300000"
+    });
+
+    expect(config.xiaomiTimeoutMs).toBe(180000);
+    expect(config.writerTimeoutMs).toBe(300000);
+  });
+
+  it("rejects invalid Xiaomi role timeouts", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    await expect(buildRunConfig({ file: promptPath, xiaomiTimeoutMs: "999" })).rejects.toThrow();
+    await expect(buildRunConfig({ file: promptPath, writerTimeoutMs: "600001" })).rejects.toThrow();
+  });
+
   it("accepts xiaomi-native", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
     const promptPath = path.join(dir, "prompt.md");

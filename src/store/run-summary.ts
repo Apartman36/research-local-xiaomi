@@ -148,7 +148,8 @@ function renderRunSummary(context: RunSummaryContext): string {
     `- Errors: ${value(usage?.errors)}`,
     `- Partial run: ${partial ? "yes" : "no"}`,
     `- Report review readyForUse: ${review ? String(review.readyForUse) : "unavailable"}`,
-    `- Report review qualityScore: ${value(review?.qualityScore)}`,
+    `- ${formatReviewScoreLine(review)}`,
+    ...(review?.parseFallback ? ["- Report review parsing: fallback"] : []),
     "",
     "## Usage",
     "",
@@ -175,9 +176,9 @@ function renderRunSummary(context: RunSummaryContext): string {
     "",
     `- overallAssessment: ${value(review?.overallAssessment)}`,
     `- readyForUse: ${review ? String(review.readyForUse) : "unavailable"}`,
-    `- qualityScore: ${value(review?.qualityScore)}`,
-    ...topReviewItems("Top gaps", review?.gaps.map((gap) => gap.gap)),
-    ...topReviewItems("Top recommendations", review?.recommendations),
+    `- ${formatReviewSummaryScoreLine(review)}`,
+    ...topReviewItems("Top gaps", review?.topGaps ?? review?.gaps.map((gap) => gap.gap)),
+    ...topReviewItems("Top recommendations", review?.topRecommendations ?? review?.recommendations),
     "",
     "## Source Summary",
     "",
@@ -222,6 +223,32 @@ function topReviewItems(label: string, items: string[] | undefined): string[] {
     return [`- ${label}: unavailable`];
   }
   return [`- ${label}:`, ...top.map((item) => `  - ${item}`)];
+}
+
+function formatReviewScoreLine(review: ReportReview | undefined): string {
+  if (!review) {
+    return "Report review readinessScore: unavailable";
+  }
+  if (typeof review.readinessScore === "number") {
+    return `Report review readinessScore: ${review.readinessScore} / ${review.scoreLabel ?? "unlabeled"}`;
+  }
+  if (typeof review.qualityScore === "number") {
+    return `Report review qualityScore: ${review.qualityScore}`;
+  }
+  return "Report review readinessScore: unavailable";
+}
+
+function formatReviewSummaryScoreLine(review: ReportReview | undefined): string {
+  if (!review) {
+    return "readinessScore: unavailable";
+  }
+  if (typeof review.readinessScore === "number") {
+    return `readinessScore: ${review.readinessScore} / ${review.scoreLabel ?? "unlabeled"}`;
+  }
+  if (typeof review.qualityScore === "number") {
+    return `qualityScore: ${review.qualityScore}`;
+  }
+  return "readinessScore: unavailable";
 }
 
 function summarizeTopDomains(sources: Source[]): string[] {

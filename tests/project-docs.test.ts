@@ -6,6 +6,7 @@ const expectedFiles = [
   "docs/COMMANDS_REFERENCE.md",
   ".codex/skills/use-research-xm/SKILL.md",
   "prompts/dev-research-template.md",
+  "prompts/open-source-agentic-research-systems.md",
   "knowledge/research-log.md",
   "knowledge/backlog.md"
 ];

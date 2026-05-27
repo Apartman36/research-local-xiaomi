@@ -64,6 +64,7 @@ export async function runCritic(params: {
   sources: Source[];
   focus: ResearchFocus;
   dryRun: boolean;
+  timeoutMs?: number;
 }): Promise<CriticResult> {
   if (params.dryRun) {
     return {
@@ -84,6 +85,7 @@ export async function runCritic(params: {
     baseUrl: params.baseUrl,
     model: params.model,
     maxCompletionTokens: params.maxCompletionTokens,
+    timeoutMs: params.timeoutMs,
     messages: [
       { role: "system", content: system },
       {

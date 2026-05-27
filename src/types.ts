@@ -4,6 +4,8 @@ export type Confidence = "low" | "medium" | "high";
 export type Phase = "planner" | "researcher" | "critic" | "writer" | "reportReviewer" | "smoke";
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
 export type ResearcherMode = "extract" | "mechanical";
+export type ReadinessScore = -2 | -1 | 0 | 1 | 2;
+export type ScoreLabel = "harmful" | "weak" | "mixed" | "useful" | "strong";
 
 export type ResearchProfile = {
   name: ResearchProfileName;
@@ -46,6 +48,8 @@ export type RunConfig = {
   opencodeModel: string;
   opencodeTimeoutMs: number;
   opencodeRetries: number;
+  xiaomiTimeoutMs: number;
+  writerTimeoutMs?: number;
   roleModels: RoleModels;
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
@@ -56,6 +60,12 @@ export type RunConfig = {
   dryRun: boolean;
   verbose: boolean;
   startedAt: string;
+  parentRunId?: string;
+  followUpDepth?: number;
+  followUpReason?: string;
+  gapsAddressed?: string[];
+  followUpPromptPath?: string;
+  isFollowUpRun?: boolean;
 };
 
 export type RunState = {
@@ -159,7 +169,15 @@ export type Critique = {
 
 export type ReportReview = {
   overallAssessment: string;
-  qualityScore: number;
+  readinessScore?: ReadinessScore;
+  scoreLabel?: ScoreLabel;
+  qualityScore?: number;
+  topGaps?: string[];
+  topRecommendations?: string[];
+  sourceQualityNotes?: string[];
+  followUpQueries?: string[];
+  parseFallback?: boolean;
+  rawOutputPath?: string;
   citationAssessment: {
     hasUnsupportedClaims: boolean;
     unsupportedClaims: Array<{

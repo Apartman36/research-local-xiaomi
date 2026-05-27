@@ -19,7 +19,7 @@ describe("run summary", () => {
     expect(markdown).toContain("- Report: ./report.md");
     expect(markdown).toContain("- Citation lint: ok");
     expect(markdown).toContain("- Report review readyForUse: false");
-    expect(markdown).toContain("- Report review qualityScore: 72");
+    expect(markdown).toContain("- Report review readinessScore: -1 / weak");
     expect(markdown).toContain("- Xiaomi calls: 5");
     expect(markdown).toContain("- Researcher calls: 2");
     expect(markdown).toContain("- OpenCode attempts: 3");
@@ -92,13 +92,36 @@ describe("run summary", () => {
     const runDir = await fixtureRunDir();
     expect(getRunSummaryPath(runDir)).toBe(path.join(runDir, "run_summary.md"));
   });
+
+  it("still displays legacy qualityScore for old report review artifacts", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { legacyQualityScore: true });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Report review qualityScore: 72");
+  });
+
+  it("shows reviewer parsing fallback when present", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { parseFallback: true });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Report review parsing: fallback");
+  });
 });
 
 async function fixtureRunDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "research-xm-summary-"));
 }
 
-async function writeCompleteArtifacts(runDir: string, options: { reportReview?: boolean } = {}): Promise<void> {
+async function writeCompleteArtifacts(
+  runDir: string,
+  options: { reportReview?: boolean; legacyQualityScore?: boolean; parseFallback?: boolean } = {}
+): Promise<void> {
   const config = {
     runId: path.basename(runDir),
     startedAt: "2026-05-26T21:31:57.984Z",
@@ -162,7 +185,12 @@ async function writeCompleteArtifacts(runDir: string, options: { reportReview?: 
   ];
   const review: ReportReview = {
     overallAssessment: "Useful, but needs stronger independent evidence.",
-    qualityScore: 72,
+    readinessScore: -1,
+    scoreLabel: "weak",
+    topGaps: ["Independent benchmarks", "Pricing", "API limits", "Older tools"],
+    topRecommendations: ["Investigate independent benchmarks", "Check pricing", "Validate API limits", "Plan follow-up"],
+    sourceQualityNotes: ["Several vendor sources."],
+    followUpQueries: ["independent benchmark"],
     citationAssessment: {
       hasUnsupportedClaims: false,
       unsupportedClaims: [],
@@ -181,7 +209,8 @@ async function writeCompleteArtifacts(runDir: string, options: { reportReview?: 
       { gap: "Older tools", whyItMatters: "Historical context" }
     ],
     recommendations: ["Investigate independent benchmarks", "Check pricing", "Validate API limits", "Plan follow-up"],
-    readyForUse: false
+    readyForUse: false,
+    parseFallback: options.parseFallback
   };
 
   await writeFile(path.join(runDir, "config.json"), JSON.stringify(config), "utf8");
@@ -191,7 +220,20 @@ async function writeCompleteArtifacts(runDir: string, options: { reportReview?: 
   await writeFile(path.join(runDir, "report.md"), "# Report\n\nClaim [1].\n", "utf8");
   await writeFile(path.join(runDir, "events.jsonl"), "{\"type\":\"citation_lint_completed\",\"ok\":true,\"sourcesUsed\":1}\n", "utf8");
   if (options.reportReview !== false) {
-    await writeFile(path.join(runDir, "report_review.json"), JSON.stringify(review), "utf8");
+    const persistedReview = options.legacyQualityScore
+      ? {
+          ...review,
+          readinessScore: undefined,
+          scoreLabel: undefined,
+          topGaps: undefined,
+          topRecommendations: undefined,
+          sourceQualityNotes: undefined,
+          followUpQueries: undefined,
+          parseFallback: undefined,
+          qualityScore: 72
+        }
+      : review;
+    await writeFile(path.join(runDir, "report_review.json"), JSON.stringify(persistedReview), "utf8");
     await writeFile(path.join(runDir, "report_review.md"), "# Review\n", "utf8");
   }
 }

@@ -57,6 +57,7 @@ export async function runResearchTask(params: {
   searchProvider: SearchProvider;
   opencodeTimeoutMs?: number;
   opencodeRetries?: number;
+  xiaomiTimeoutMs?: number;
   researcherMode: ResearcherMode;
   dryRun: boolean;
   onEvent?: (type: string, metadata?: Record<string, unknown>) => Promise<void> | void;
@@ -72,7 +73,7 @@ export async function runResearchTask(params: {
       focus: params.task.focus,
       maxResults: params.profile.limit,
       model: params.model,
-      timeoutMs: params.opencodeTimeoutMs,
+      timeoutMs: params.searchProvider.name === "xiaomi-native" ? params.xiaomiTimeoutMs : params.opencodeTimeoutMs,
       retries: params.opencodeRetries,
       onEvent: params.onEvent
     });
@@ -101,6 +102,7 @@ export async function runResearchTask(params: {
         baseUrl: params.baseUrl,
         model: params.model,
         maxCompletionTokens: params.maxCompletionTokens,
+        timeoutMs: params.xiaomiTimeoutMs,
         messages: [
           { role: "system", content: system },
           {

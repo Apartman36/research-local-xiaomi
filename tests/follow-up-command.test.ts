@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { printFollowUpCommand } from "../src/cli.js";
+import type { RunConfig } from "../src/types.js";
 
 describe("follow-up command", () => {
   it("writes a follow-up prompt for the latest complete run", async () => {
@@ -44,13 +45,16 @@ describe("follow-up command", () => {
     );
   });
 
-  it("requires --write-prompt-only", async () => {
+  it("requires exactly one safe mode", async () => {
     const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
     const runDir = path.join(outputDir, "2026-05-27T21-31-57-984Z-xm");
     await mkdir(runDir);
 
-    await expect(printFollowUpCommand("latest", { outputDir, writePromptOnly: false })).rejects.toThrow(
-      "--write-prompt-only is required"
+    await expect(printFollowUpCommand("latest", { outputDir, writePromptOnly: false, execute: false })).rejects.toThrow(
+      "Exactly one of --write-prompt-only or --execute is required"
+    );
+    await expect(printFollowUpCommand("latest", { outputDir, writePromptOnly: true, execute: true })).rejects.toThrow(
+      "Exactly one of --write-prompt-only or --execute is required"
     );
   });
 
@@ -67,7 +71,116 @@ describe("follow-up command", () => {
     expect(prompt).toContain("Independent benchmarks");
     await expect(stat(path.join(runDir, "follow_up_prompt.md"))).resolves.toBeTruthy();
   });
+
+  it("executes a latest follow-up run with generated prompt and lineage metadata", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const parentRunId = "2026-05-27T21-31-57-984Z-xm";
+    const runDir = path.join(outputDir, parentRunId);
+    await mkdir(runDir);
+    await writeCompleteArtifacts(runDir);
+    const runWorkflow = vi.fn(async (config: RunConfig) => ({
+      runId: config.runId,
+      runDir: config.runDir,
+      reportPath: path.join(config.runDir, "report.md"),
+      focus: config.focus,
+      searchProvider: config.searchProvider,
+      researcherMode: config.researcherMode,
+      usage: minimalUsage(),
+      lintOk: true,
+      lintUnknownNumbers: [],
+      summaryPath: path.join(config.runDir, "run_summary.md")
+    }));
+
+    const output = await printFollowUpCommand(
+      "latest",
+      {
+        outputDir,
+        writePromptOnly: false,
+        execute: true,
+        profile: "smoke5",
+        focus: "github",
+        searchProvider: "opencode-web",
+        maxTasks: "2",
+        xiaomiTimeoutMs: "180000",
+        writerTimeoutMs: "300000"
+      },
+      { runWorkflow, apiKey: "test-key" }
+    );
+
+    expect(runWorkflow).toHaveBeenCalledTimes(1);
+    const childConfig = runWorkflow.mock.calls[0]?.[0] as RunConfig;
+    expect(childConfig.prompt).toContain("# Follow-Up Research Task");
+    expect(childConfig.profile.name).toBe("smoke5");
+    expect(childConfig.focus).toBe("github");
+    expect(childConfig.searchProvider).toBe("opencode-web");
+    expect(childConfig.maxTasks).toBe(2);
+    expect(childConfig.xiaomiTimeoutMs).toBe(180000);
+    expect(childConfig.writerTimeoutMs).toBe(300000);
+    expect(childConfig.parentRunId).toBe(parentRunId);
+    expect(childConfig.isFollowUpRun).toBe(true);
+    expect(childConfig.followUpDepth).toBe(1);
+    expect(childConfig.followUpPromptPath).toBe(path.join(runDir, "follow_up_prompt.md"));
+    expect(childConfig.gapsAddressed).toContain("Independent benchmarks");
+    expect(output).toContain("Follow-up prompt written:");
+    expect(output).toContain("Follow-up run started:");
+  });
+
+  it("executes an explicit run id follow-up", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const runDir = path.join(outputDir, "2026-05-27T21-31-57-984Z-xm");
+    await mkdir(runDir);
+    await writeCompleteArtifacts(runDir);
+    const runWorkflow = vi.fn(async (config: RunConfig) => ({
+      runId: config.runId,
+      runDir: config.runDir,
+      reportPath: path.join(config.runDir, "report.md"),
+      focus: config.focus,
+      searchProvider: config.searchProvider,
+      researcherMode: config.researcherMode,
+      usage: minimalUsage(),
+      lintOk: true,
+      lintUnknownNumbers: []
+    }));
+
+    await printFollowUpCommand(
+      "2026-05-27T21-31-57-984Z-xm",
+      { outputDir, writePromptOnly: false, execute: true },
+      { runWorkflow, apiKey: "test-key" }
+    );
+
+    expect(runWorkflow).toHaveBeenCalledTimes(1);
+    expect((runWorkflow.mock.calls[0]?.[0] as RunConfig).parentRunId).toBe("2026-05-27T21-31-57-984Z-xm");
+  });
 });
+
+function minimalUsage() {
+  return {
+    totalCalls: 0,
+    callsByPhase: {},
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    web_search_usage: { tool_usage: 0, page_usage: 0 },
+    uniqueSources: 0,
+    sourcesUsedInReport: 0,
+    errors: 0,
+    started_at: "2026-05-27T21:31:57.984Z",
+    profile: "smoke5" as const,
+    model: "mimo-v2.5-pro",
+    xiaomi: { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    opencode: {
+      calls: 0,
+      attempts: 0,
+      websearch_calls: 0,
+      webfetch_calls: 0,
+      retries: 0,
+      failures: 0,
+      tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 },
+      cost: null
+    },
+    sources: { raw_sources: 0, unique_sources: 0, used_in_report: 0 }
+  };
+}
 
 async function writeCompleteArtifacts(runDir: string, options: { reportReview?: boolean } = {}): Promise<void> {
   await writeFile(path.join(runDir, "input.md"), "# Topic\n\nResearch TypeScript CLI reliability patterns.", "utf8");
