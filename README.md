@@ -97,6 +97,7 @@ Recommended files for future Codex sessions and human planning:
 
 - `docs/CODEX_RESEARCH_WORKFLOW.md`
 - `docs/COMMANDS_REFERENCE.md`
+- `docs/V05_NEXT_PATCHES_REMINDER.md`
 - `.codex/skills/use-research-xm/SKILL.md`
 - `prompts/dev-research-template.md`
 - `knowledge/research-log.md`
@@ -111,6 +112,7 @@ corepack pnpm research-xm run `
   --focus web `
   --search-provider opencode-web `
   --max-tasks 3 `
+  --quota-mode normal `
   --opencode-timeout-ms 120000 `
   --opencode-retries 2 `
   --concurrency 1 `
@@ -145,6 +147,7 @@ corepack pnpm research-xm follow-up latest `
   --focus github `
   --search-provider opencode-web `
   --max-tasks 5 `
+  --quota-mode normal `
   --opencode-timeout-ms 180000 `
   --opencode-retries 2 `
   --xiaomi-timeout-ms 120000 `
@@ -391,6 +394,7 @@ If `run_summary.md` is missing for an older or incomplete run, `research-xm summ
 - Xiaomi prompt, completion, and total tokens
 - OpenCode calls, websearch calls, webfetch calls, and token totals when present in OpenCode events
 - OpenCode attempts, retries, failures, and last error when present
+- `tokenAccounting`, which separates direct Xiaomi usage from OpenCode subprocess usage and estimated totals
 - `web_search_usage.tool_usage`
 - `web_search_usage.page_usage`
 - raw, unique, and report-used source counts
@@ -401,6 +405,18 @@ If `run_summary.md` is missing for an older or incomplete run, `research-xm summ
 OpenCode/Exa search cost is not invented. When unavailable, `usage.json` records OpenCode `cost` as `null`.
 
 For early-exit OpenCode runs, token totals may be unavailable because `research-xm` terminates the subprocess after sources are extracted. In that case `usage.json` may include `opencode.tokensUnavailable: true`, and the CLI prints `OpenCode tokens: unavailable (early exit)` instead of presenting `0` as real token accounting.
+
+New runs also include `tokenAccounting`:
+
+- `directXiaomi` is the Xiaomi API usage visible to `research-xm`.
+- `openCode` is tracked separately because OpenCode may use tokens internally without reporting token counts.
+- unavailable OpenCode tokens are estimated with a rough attempts multiplier, currently `3000` tokens per OpenCode attempt.
+- `total.tokenAccountingCompleteness` is `complete`, `direct-only`, `estimated`, or `unavailable`.
+- estimated totals are operational heuristics, not billing truth.
+
+The Xiaomi dashboard may show more usage than direct `usage.json` totals because OpenCode subprocesses can consume provider tokens outside the direct Xiaomi API calls that `research-xm` sees. P1 is about honest lower-bound and estimated accounting, not perfect billing reconciliation.
+
+Use `--quota-mode conservative|normal|aggressive` on `run` and `follow-up --execute` to adjust warning thresholds. `normal` is the default. `conservative` warns earlier and recommends tighter `--max-tasks` use, especially with `deep500`. `aggressive` emits fewer estimate-based warnings and does not fail just because an estimate is high.
 
 ## Report Review
 

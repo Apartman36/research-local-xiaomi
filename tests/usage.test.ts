@@ -50,5 +50,43 @@ describe("UsageTracker", () => {
     expect(summary.uniqueSources).toBe(7);
     expect(summary.sourcesUsedInReport).toBe(3);
     expect(summary.errors).toBe(1);
+    expect(summary.tokenAccounting).toMatchObject({
+      schemaVersion: 1,
+      directXiaomi: {
+        known: true,
+        totalTokens: 48,
+        calls: 3
+      },
+      openCode: {
+        known: false,
+        tokens: null,
+        calls: 2,
+        attempts: 3,
+        reason: "early_exit",
+        estimatedTokens: 9000,
+        estimateMethod: "calls_multiplier"
+      },
+      total: {
+        known: false,
+        knownDirectTokens: 48,
+        estimatedTotalTokens: 9048,
+        isLowerBound: true,
+        tokenAccountingCompleteness: "estimated"
+      },
+      quotaRiskLevel: "green"
+    });
+    expect(summary.tokenAccounting?.warnings[0]).toContain("OpenCode token usage was not reported");
+  });
+
+  it("includes estimated OpenCode tokens when attempts exist without reported tokens", () => {
+    const tracker = new UsageTracker("2026-01-01T00:00:00.000Z", "normal100", "mimo-v2.5-pro");
+    tracker.addCall("planner", { total_tokens: 100 });
+    tracker.addOpenCodeUsage({ calls: 1, attempts: 2, websearchCalls: 1, webfetchCalls: 0 });
+
+    const summary = tracker.finish(1, 1);
+
+    expect(summary.tokenAccounting?.openCode.reason).toBe("not_reported");
+    expect(summary.tokenAccounting?.openCode.estimatedTokens).toBe(6000);
+    expect(summary.tokenAccounting?.total.estimatedTotalTokens).toBe(6100);
   });
 });

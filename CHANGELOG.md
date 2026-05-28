@@ -15,6 +15,9 @@
 - Replaced future report reviewer scoring with `readinessScore` on the `-2..2` scale while preserving old `qualityScore` display.
 - Normalized invalid reviewer scores conservatively instead of clamping high invalid values into `strong`.
 - Hardened report reviewer parsing for fenced/prose-surrounded JSON and saved malformed raw output for fallback review inspection.
+- Added `tokenAccounting` to `usage.json` so direct Xiaomi tokens, OpenCode subprocess usage, estimates, lower-bound status, quota risk, and warnings are explicit.
+- Added `--quota-mode conservative|normal|aggressive` to `run` and `follow-up --execute`.
+- Added `docs/V05_NEXT_PATCHES_REMINDER.md` to keep deferred v0.5 work out of P1 unless the user explicitly approves scope.
 - Improved follow-up depth errors so child runs point back to `parentRunId` when execution is blocked.
 - Documented `input/` as ignored scratch and `prompts/` as committed reusable prompt fixtures.
 - Updated README and workflow docs with Context7, follow-up prompt, and git/workflow safety expectations.

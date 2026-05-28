@@ -8,6 +8,7 @@ describe("CLI help", () => {
     expect(runCommand?.helpInformation()).toContain("--opencode-retries <n>");
     expect(runCommand?.helpInformation()).toContain("--xiaomi-timeout-ms <ms>");
     expect(runCommand?.helpInformation()).toContain("--writer-timeout-ms <ms>");
+    expect(runCommand?.helpInformation()).toContain("--quota-mode <conservative|normal|aggressive>");
   });
 
   it("documents the safe follow-up prompt command", () => {
@@ -16,6 +17,7 @@ describe("CLI help", () => {
     expect(followUpCommand?.helpInformation()).toContain("--write-prompt-only");
     expect(followUpCommand?.helpInformation()).toContain("--execute");
     expect(followUpCommand?.helpInformation()).toContain("--xiaomi-timeout-ms <ms>");
+    expect(followUpCommand?.helpInformation()).toContain("--quota-mode <conservative|normal|aggressive>");
   });
 
   it("documents the resume command", () => {

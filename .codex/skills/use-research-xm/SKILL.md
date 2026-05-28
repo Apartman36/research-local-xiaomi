@@ -34,6 +34,9 @@ Use:
 - Context7 MCP for fresh library/API documentation and code examples.
 - local repo inspection for facts about this codebase.
 
+Before any v0.5 work, read `docs/V05_NEXT_PATCHES_REMINDER.md`.
+Do not implement P2-P6 unless the user explicitly asks.
+
 Codex must be opened from the repository root to see this repo-local skill:
 
 ```text

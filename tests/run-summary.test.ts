@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildTokenAccounting } from "../src/store/usage.js";
 import { generateRunSummary, getRunSummaryPath } from "../src/store/run-summary.js";
 import type { ReportReview, Source, UsageSummary } from "../src/types.js";
 
@@ -27,6 +28,8 @@ describe("run summary", () => {
     expect(markdown).toContain("- OpenCode failures: 1");
     expect(markdown).toContain("- Last OpenCode error: timeout");
     expect(markdown).toContain("- OpenCode tokens: unavailable (early exit)");
+    expect(markdown).toContain("## Token Accounting");
+    expect(markdown).toContain("- Token accounting: legacy usage format");
     expect(markdown).toContain("## Report Review Summary");
     expect(markdown).toContain("- Investigate independent benchmarks");
     expect(markdown).toContain("## Source Summary");
@@ -88,6 +91,33 @@ describe("run summary", () => {
     expect(markdown).toContain("- Last OpenCode error: timeout");
   });
 
+  it("renders structured token accounting when usage has new fields", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { tokenAccounting: true });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("## Token Accounting");
+    expect(markdown).toContain("- Direct Xiaomi tokens: 150");
+    expect(markdown).toContain("- OpenCode tokens: unavailable");
+    expect(markdown).toContain("- Estimated OpenCode tokens: 9000");
+    expect(markdown).toContain("- Estimated total tokens: 9150");
+    expect(markdown).toContain("- Accounting completeness: estimated / lower-bound");
+    expect(markdown).toContain("- Warning: OpenCode token usage was not reported");
+  });
+
+  it("summarizes old usage.json without tokenAccounting", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir);
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Token accounting: legacy usage format");
+    expect(markdown).toContain("- Direct Xiaomi tokens: 150");
+  });
+
   it("returns the expected summary path", async () => {
     const runDir = await fixtureRunDir();
     expect(getRunSummaryPath(runDir)).toBe(path.join(runDir, "run_summary.md"));
@@ -131,7 +161,13 @@ async function fixtureRunDir(): Promise<string> {
 
 async function writeCompleteArtifacts(
   runDir: string,
-  options: { reportReview?: boolean; legacyQualityScore?: boolean; parseFallback?: boolean; validationWarning?: string } = {}
+  options: {
+    reportReview?: boolean;
+    legacyQualityScore?: boolean;
+    parseFallback?: boolean;
+    validationWarning?: string;
+    tokenAccounting?: boolean;
+  } = {}
 ): Promise<void> {
   const config = {
     runId: path.basename(runDir),
@@ -194,6 +230,9 @@ async function writeCompleteArtifacts(
       seenCount: 1
     }
   ];
+  if (options.tokenAccounting) {
+    usage.tokenAccounting = buildTokenAccounting(usage);
+  }
   const review: ReportReview = {
     overallAssessment: "Useful, but needs stronger independent evidence.",
     readinessScore: -1,

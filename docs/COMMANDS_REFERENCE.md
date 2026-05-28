@@ -59,7 +59,7 @@ research-xm smoke
 
 - default
 - uses OpenCode websearch
-- OpenCode token accounting may be unavailable due to early exit
+- OpenCode token accounting may be unavailable due to early exit; new runs estimate it separately and mark total accounting as complete, direct-only, estimated, or unavailable
 
 `xiaomi-native`
 
@@ -107,6 +107,8 @@ If reviewer JSON parsing fails, `report_review_raw.txt` is saved, `Report review
 `--xiaomi-timeout-ms` controls the default Xiaomi role timeout for planner, researcher extraction, critic, writer, and report reviewer.
 
 `--writer-timeout-ms` overrides the Xiaomi timeout for the writer only.
+
+`--quota-mode conservative|normal|aggressive` controls warning thresholds for estimated usage. `normal` is the default. `conservative` warns earlier and recommends explicit `--max-tasks`, especially with `deep500`. `aggressive` emits fewer estimate-based warnings and does not fail merely because an estimated total is high.
 
 Examples:
 
@@ -283,6 +285,18 @@ Resume only works for runs created after `state.json` support was added. Legacy 
 ## Prompt locations
 
 `input/` is local scratch for one-off prompts and is ignored by git. `prompts/` contains reusable committed prompt fixtures.
+
+## Token accounting
+
+`usage.json` keeps old token fields for compatibility and adds `tokenAccounting` for new runs:
+
+- direct Xiaomi API tokens are the usage `research-xm` receives from Xiaomi role calls
+- OpenCode subprocess calls are counted separately because token totals are often not reported
+- unavailable OpenCode tokens are estimated with a rough attempts multiplier, not treated as billing truth
+- estimated totals are lower-bound operational guidance when OpenCode usage is unavailable
+- the Xiaomi dashboard may show more usage than direct `usage.json` totals because OpenCode can consume provider tokens internally
+
+P1 improves honesty and quota warnings; it does not provide perfect provider billing reconciliation.
 
 ## Troubleshooting
 

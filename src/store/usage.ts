@@ -1,10 +1,12 @@
-import type { Phase, ResearchProfileName, UsageSummary, XiaomiUsage } from "../types.js";
+import type { Phase, QuotaMode, ResearchProfileName, TokenAccounting, UsageSummary, XiaomiUsage } from "../types.js";
 import type { SearchProviderUsage } from "../search/search-provider.js";
+
+export const DEFAULT_OPENCODE_ATTEMPT_TOKEN_ESTIMATE = 3000;
 
 export class UsageTracker {
   private readonly summary: UsageSummary;
 
-  constructor(startedAt: string, profile: ResearchProfileName, model: string) {
+  constructor(startedAt: string, profile: ResearchProfileName, model: string, quotaMode: QuotaMode = "normal") {
     this.summary = {
       totalCalls: 0,
       callsByPhase: {},
@@ -21,6 +23,7 @@ export class UsageTracker {
       started_at: startedAt,
       profile,
       model,
+      quotaMode,
       xiaomi: {
         calls: 0,
         prompt_tokens: 0,
@@ -110,12 +113,105 @@ export class UsageTracker {
     this.summary.sources.used_in_report = sourcesUsedInReport;
     this.summary.finished_at = finishedAt.toISOString();
     this.summary.duration_seconds = Math.max(0, Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000));
+    this.summary.tokenAccounting = buildTokenAccounting(this.summary);
     return { ...this.summary, callsByPhase: { ...this.summary.callsByPhase } };
   }
 
   snapshot(): UsageSummary {
     return { ...this.summary, callsByPhase: { ...this.summary.callsByPhase } };
   }
+}
+
+export function buildTokenAccounting(summary: UsageSummary): TokenAccounting {
+  const knownDirectTokens = numeric(summary.xiaomi.total_tokens, summary.total_tokens);
+  const openCodeAttempts = numeric(summary.opencode.attempts, summary.opencode.calls);
+  const openCodeCalls = numeric(summary.opencode.calls);
+  const reportedOpenCodeTokens = numeric(summary.opencode.tokens.total);
+  const hasReportedOpenCodeTokens = reportedOpenCodeTokens > 0 && !summary.opencode.tokensUnavailable;
+  const hasOpenCodeActivity = openCodeAttempts > 0 || openCodeCalls > 0;
+  const openCodeReason = hasReportedOpenCodeTokens
+    ? "reported"
+    : !hasOpenCodeActivity
+      ? "not_applicable"
+      : summary.opencode.tokensUnavailable
+        ? "early_exit"
+        : "not_reported";
+  const openCodeKnown = openCodeReason === "reported" || openCodeReason === "not_applicable";
+  const estimatedOpenCodeTokens = openCodeKnown ? 0 : openCodeAttempts * DEFAULT_OPENCODE_ATTEMPT_TOKEN_ESTIMATE;
+  const estimatedTotalTokens = knownDirectTokens + (hasReportedOpenCodeTokens ? reportedOpenCodeTokens : estimatedOpenCodeTokens);
+  const totalKnown = openCodeKnown;
+  const completeness = totalKnown
+    ? "complete"
+    : estimatedOpenCodeTokens > 0
+      ? "estimated"
+      : knownDirectTokens > 0
+        ? "direct-only"
+        : "unavailable";
+
+  return {
+    schemaVersion: 1,
+    directXiaomi: {
+      known: true,
+      promptTokens: numeric(summary.xiaomi.prompt_tokens, summary.prompt_tokens),
+      completionTokens: numeric(summary.xiaomi.completion_tokens, summary.completion_tokens),
+      totalTokens: knownDirectTokens,
+      calls: numeric(summary.xiaomi.calls, summary.totalCalls)
+    },
+    openCode: {
+      known: openCodeKnown,
+      tokens: hasReportedOpenCodeTokens ? reportedOpenCodeTokens : null,
+      calls: openCodeCalls,
+      attempts: openCodeAttempts,
+      successfulCalls: openCodeCalls,
+      reason: openCodeReason,
+      estimatedTokens: estimatedOpenCodeTokens,
+      estimateMethod: estimatedOpenCodeTokens > 0 ? "calls_multiplier" : "none"
+    },
+    total: {
+      known: totalKnown,
+      knownDirectTokens,
+      estimatedTotalTokens,
+      isLowerBound: !totalKnown,
+      tokenAccountingCompleteness: completeness
+    },
+    quotaRiskLevel: quotaRiskLevel(summary.quotaMode ?? "normal", estimatedTotalTokens),
+    warnings: buildTokenAccountingWarnings(summary, openCodeKnown, openCodeReason, estimatedOpenCodeTokens)
+  };
+}
+
+function buildTokenAccountingWarnings(
+  summary: UsageSummary,
+  openCodeKnown: boolean,
+  openCodeReason: TokenAccounting["openCode"]["reason"],
+  estimatedOpenCodeTokens: number
+): string[] {
+  const warnings: string[] = [];
+  if (!openCodeKnown && openCodeReason !== "not_applicable") {
+    warnings.push("OpenCode token usage was not reported. Estimated OpenCode usage is a rough heuristic; total token usage is a lower bound.");
+  }
+  if ((summary.quotaMode ?? "normal") === "conservative" && summary.profile === "deep500") {
+    warnings.push("Conservative quota mode with deep500 can consume many OpenCode attempts; prefer setting --max-tasks explicitly.");
+  }
+  if ((summary.quotaMode ?? "normal") === "conservative" && estimatedOpenCodeTokens > 0) {
+    warnings.push("Conservative quota mode treats OpenCode estimates as higher risk; consider a smaller --max-tasks value.");
+  }
+  return warnings;
+}
+
+function quotaRiskLevel(quotaMode: QuotaMode, estimatedTotalTokens: number): TokenAccounting["quotaRiskLevel"] {
+  const thresholds = {
+    conservative: { amber: 25_000, red: 75_000 },
+    normal: { amber: 50_000, red: 150_000 },
+    aggressive: { amber: 150_000, red: 500_000 }
+  } satisfies Record<QuotaMode, { amber: number; red: number }>;
+  const selected = thresholds[quotaMode];
+  if (estimatedTotalTokens >= selected.red) {
+    return "red";
+  }
+  if (estimatedTotalTokens >= selected.amber) {
+    return "amber";
+  }
+  return "green";
 }
 
 function numeric(...values: unknown[]): number {

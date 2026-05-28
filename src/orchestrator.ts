@@ -35,7 +35,7 @@ export type RunResult = {
 export async function runResearch(config: RunConfig, apiKey: string): Promise<RunResult> {
   await createRunDirectory(config.runDir);
   const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
-  const usage = new UsageTracker(config.startedAt, config.profile.name, config.model);
+  const usage = new UsageTracker(config.startedAt, config.profile.name, config.model, config.quotaMode);
   const state = await RunStateTracker.create(config);
   let completed = false;
 
@@ -224,7 +224,7 @@ export async function resumeResearch(runDir: string, apiKey: string, options: Re
   await createRunDirectory(config.runDir);
   const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
   const state = await RunStateTracker.load(config.runDir);
-  const usage = new UsageTracker(new Date().toISOString(), config.profile.name, config.model);
+  const usage = new UsageTracker(new Date().toISOString(), config.profile.name, config.model, config.quotaMode);
 
   await events.log("resume_started", { runId: config.runId, failedStage });
   await events.log("resume_stage_selected", { stage: startStage });
@@ -428,6 +428,7 @@ async function loadResumableConfig(runDir: string, options: ResumeOptions): Prom
     prompt,
     runDir,
     outputDirRoot: path.dirname(runDir),
+    quotaMode: persisted.quotaMode ?? "normal",
     notify: options.notify ?? persisted.notify,
     verbose: options.verbose ?? persisted.verbose,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs ?? persisted.xiaomiTimeoutMs,

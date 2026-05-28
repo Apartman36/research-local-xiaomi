@@ -122,6 +122,7 @@ describe("follow-up command", () => {
         focus: "github",
         searchProvider: "opencode-web",
         maxTasks: "2",
+        quotaMode: "conservative",
         xiaomiTimeoutMs: "180000",
         writerTimeoutMs: "300000"
       },
@@ -135,6 +136,7 @@ describe("follow-up command", () => {
     expect(childConfig.focus).toBe("github");
     expect(childConfig.searchProvider).toBe("opencode-web");
     expect(childConfig.maxTasks).toBe(2);
+    expect(childConfig.quotaMode).toBe("conservative");
     expect(childConfig.xiaomiTimeoutMs).toBe(180000);
     expect(childConfig.writerTimeoutMs).toBe(300000);
     expect(childConfig.parentRunId).toBe(parentRunId);

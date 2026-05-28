@@ -15,6 +15,25 @@ describe("search provider config", () => {
     expect(config.searchProvider).toBe("opencode-web");
     expect(config.opencodeModel).toBe("xiaomi-token-plan-sgp/mimo-v2.5-pro");
     expect(config.opencodeRetries).toBe(2);
+    expect(config.quotaMode).toBe("normal");
+  });
+
+  it.each(["normal", "conservative", "aggressive"] as const)("accepts quota mode %s", async (quotaMode) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({ file: promptPath, quotaMode });
+
+    expect(config.quotaMode).toBe(quotaMode);
+  });
+
+  it("rejects invalid quota mode", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    await expect(buildRunConfig({ file: promptPath, quotaMode: "reckless" as never })).rejects.toThrow();
   });
 
   it("accepts bounded OpenCode retries", async () => {

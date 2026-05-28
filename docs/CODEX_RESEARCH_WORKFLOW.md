@@ -6,6 +6,7 @@ Core principle: run `research-xm` at decision points, not on a timer.
 
 The canonical Codex Agent Skill for this workflow is `.codex/skills/use-research-xm/SKILL.md`.
 Use `docs/COMMANDS_REFERENCE.md` for quick command syntax.
+Before proposing or implementing v0.5 work, read `docs/V05_NEXT_PATCHES_REMINDER.md`. Do not start P2-P6 unless the user explicitly approves the scope.
 
 Codex must be opened from the repository root to see repo-local skills:
 
@@ -74,6 +75,7 @@ corepack pnpm research-xm follow-up latest `
   --focus github `
   --search-provider opencode-web `
   --max-tasks 5 `
+  --quota-mode normal `
   --opencode-timeout-ms 180000 `
   --opencode-retries 2 `
   --xiaomi-timeout-ms 120000 `
@@ -178,6 +180,8 @@ Read generated files in this order:
 3. `runs/<runId>/report.md` contains the full research result.
 4. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
 5. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, and partial failures.
+
+For new runs, `usage.json` includes `tokenAccounting`. Treat direct Xiaomi tokens as the usage visible to `research-xm`; OpenCode subprocess token usage may be unavailable and estimated. Estimated totals are lower-bound operational guidance, not billing truth, and the Xiaomi dashboard may show more usage than direct `usage.json` totals.
 
 Report reviews use `readinessScore` instead of future `qualityScore` values: `-2` harmful, `-1` weak, `0` mixed, `1` useful, `2` strong. Invalid values are normalized conservatively to `-1 / weak` and preserve `invalidReadinessScore`. Old `qualityScore` artifacts remain readable. If reviewer parsing fails, inspect `report_review_raw.txt`; the fallback score is `-1 / weak`.
 

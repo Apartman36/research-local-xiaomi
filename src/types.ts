@@ -4,6 +4,7 @@ export type Confidence = "low" | "medium" | "high";
 export type Phase = "planner" | "researcher" | "critic" | "writer" | "reportReviewer" | "smoke";
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
 export type ResearcherMode = "extract" | "mechanical";
+export type QuotaMode = "conservative" | "normal" | "aggressive";
 export type ReadinessScore = -2 | -1 | 0 | 1 | 2;
 export type ScoreLabel = "harmful" | "weak" | "mixed" | "useful" | "strong";
 export type RunStage =
@@ -64,6 +65,7 @@ export type RunConfig = {
   maxOutputTokens: RoleTokenLimits;
   concurrency: number;
   maxTasks?: number;
+  quotaMode: QuotaMode;
   researcherMode: ResearcherMode;
   reviewReport: boolean;
   notify: boolean;
@@ -226,6 +228,36 @@ export type XiaomiUsage = {
   [key: string]: unknown;
 };
 
+export type TokenAccounting = {
+  schemaVersion: 1;
+  directXiaomi: {
+    known: boolean;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    calls: number;
+  };
+  openCode: {
+    known: boolean;
+    tokens: number | null;
+    calls: number;
+    attempts: number;
+    successfulCalls: number;
+    reason: "early_exit" | "not_reported" | "not_applicable" | "reported";
+    estimatedTokens: number;
+    estimateMethod: "none" | "calls_multiplier" | "events_heuristic";
+  };
+  total: {
+    known: boolean;
+    knownDirectTokens: number;
+    estimatedTotalTokens: number;
+    isLowerBound: boolean;
+    tokenAccountingCompleteness: "complete" | "direct-only" | "estimated" | "unavailable";
+  };
+  quotaRiskLevel: "green" | "amber" | "red";
+  warnings: string[];
+};
+
 export type UsageSummary = {
   totalCalls: number;
   callsByPhase: Record<string, number>;
@@ -244,6 +276,7 @@ export type UsageSummary = {
   duration_seconds?: number;
   profile: ResearchProfileName;
   model: string;
+  quotaMode?: QuotaMode;
   xiaomi: {
     calls: number;
     prompt_tokens: number;
@@ -274,6 +307,7 @@ export type UsageSummary = {
     unique_sources: number;
     used_in_report: number;
   };
+  tokenAccounting?: TokenAccounting;
 };
 
 export type XiaomiMessage = {

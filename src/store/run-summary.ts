@@ -114,8 +114,8 @@ function renderRunSummary(context: RunSummaryContext): string {
   const config = context.config;
   const review = context.review;
   const partial = context.missingArtifacts.includes("usage.json") || Boolean(usage?.errors && usage.errors > 0);
-  const rawSources = numeric(context.evidence?.rawAnnotationCount, usage?.sources.raw_sources);
-  const uniqueSources = numeric(usage?.uniqueSources, usage?.sources.unique_sources, context.sources?.length);
+  const rawSources = numeric(context.evidence?.rawAnnotationCount, usage?.sources?.raw_sources);
+  const uniqueSources = numeric(usage?.uniqueSources, usage?.sources?.unique_sources, context.sources?.length);
   const deduplicated = rawSources === undefined || uniqueSources === undefined ? undefined : Math.max(0, rawSources - uniqueSources);
   const topDomains = summarizeTopDomains(context.sources ?? []);
   const nextActions = buildNextActions(context);
@@ -146,7 +146,7 @@ function renderRunSummary(context: RunSummaryContext): string {
     `- Citation lint: ${context.lint ? (context.lint.ok ? "ok" : "failed") : "unavailable"}`,
     `- Cited sources: ${value(context.lint?.sourcesUsed ?? usage?.sourcesUsedInReport)}`,
     `- Unique sources: ${value(uniqueSources)}`,
-    `- Sources used in report: ${value(usage?.sourcesUsedInReport ?? usage?.sources.used_in_report)}`,
+    `- Sources used in report: ${value(usage?.sourcesUsedInReport ?? usage?.sources?.used_in_report)}`,
     `- Errors: ${value(usage?.errors)}`,
     `- Partial run: ${partial ? "yes" : "no"}`,
     `- Report review readyForUse: ${review ? String(review.readyForUse) : "unavailable"}`,
@@ -166,15 +166,19 @@ function renderRunSummary(context: RunSummaryContext): string {
     `- Xiaomi total tokens: ${value(usage?.xiaomi.total_tokens ?? usage?.total_tokens)}`,
     `- Xiaomi prompt tokens: ${value(usage?.xiaomi.prompt_tokens ?? usage?.prompt_tokens)}`,
     `- Xiaomi completion tokens: ${value(usage?.xiaomi.completion_tokens ?? usage?.completion_tokens)}`,
-    `- OpenCode calls: ${value(usage?.opencode.calls)}`,
+    `- OpenCode calls: ${value(usage?.opencode?.calls)}`,
     `- OpenCode attempts: ${value(opencode.attempts)}`,
-    `- OpenCode successful calls: ${value(opencode.successfulCalls ?? usage?.opencode.calls)}`,
+    `- OpenCode successful calls: ${value(opencode.successfulCalls ?? usage?.opencode?.calls)}`,
     `- OpenCode retries: ${value(opencode.retries)}`,
     `- OpenCode failures: ${value(opencode.failures)}`,
     `- Last OpenCode error: ${value(opencode.lastError)}`,
-    `- OpenCode websearch calls: ${value(usage?.opencode.websearch_calls)}`,
-    `- OpenCode webfetch calls: ${value(usage?.opencode.webfetch_calls)}`,
+    `- OpenCode websearch calls: ${value(usage?.opencode?.websearch_calls)}`,
+    `- OpenCode webfetch calls: ${value(usage?.opencode?.webfetch_calls)}`,
     `- OpenCode tokens: ${formatOpenCodeTokens(usage)}`,
+    "",
+    "## Token Accounting",
+    "",
+    ...renderTokenAccountingLines(usage),
     "",
     "## Report Review Summary",
     "",
@@ -330,10 +334,39 @@ function formatOpenCodeTokens(usage: UsageSummary | undefined): string {
   if (!usage) {
     return "unavailable";
   }
+  if (!usage.opencode) {
+    return "unavailable";
+  }
   if (usage.opencode.tokensUnavailable) {
     return "unavailable (early exit)";
   }
   return String(usage.opencode.tokens.total);
+}
+
+function renderTokenAccountingLines(usage: UsageSummary | undefined): string[] {
+  const accounting = usage?.tokenAccounting;
+  if (!usage) {
+    return ["- Token accounting: unavailable"];
+  }
+  if (!accounting) {
+    return [
+      "- Token accounting: legacy usage format",
+      `- Direct Xiaomi tokens: ${value(usage.xiaomi?.total_tokens ?? usage.total_tokens)}`,
+      `- OpenCode tokens: ${formatOpenCodeTokens(usage)}`
+    ];
+  }
+  const completeness = accounting.total.isLowerBound
+    ? `${accounting.total.tokenAccountingCompleteness} / lower-bound`
+    : accounting.total.tokenAccountingCompleteness;
+  return [
+    `- Direct Xiaomi tokens: ${accounting.directXiaomi.totalTokens}`,
+    `- OpenCode tokens: ${accounting.openCode.known ? value(accounting.openCode.tokens) : "unavailable"}`,
+    `- Estimated OpenCode tokens: ${accounting.openCode.estimatedTokens}`,
+    `- Estimated total tokens: ${accounting.total.estimatedTotalTokens}`,
+    `- Accounting completeness: ${completeness}`,
+    `- Quota risk: ${accounting.quotaRiskLevel}`,
+    ...accounting.warnings.map((warning) => `- Warning: ${warning}`)
+  ];
 }
 
 function phaseCalls(usage: UsageSummary | undefined, phase: string): string {
@@ -374,11 +407,11 @@ function buildOpenCodeDiagnostics(usage: UsageSummary | undefined, eventsText: s
   let eventSuccessfulCalls = 0;
   let eventLastError: string | undefined;
   const diagnostics: OpenCodeDiagnostics = {
-    attempts: numeric(usage?.opencode.attempts),
-    retries: numeric(usage?.opencode.retries),
-    failures: numeric(usage?.opencode.failures),
-    lastError: usage?.opencode.last_error,
-    successfulCalls: numeric(usage?.opencode.calls)
+    attempts: numeric(usage?.opencode?.attempts),
+    retries: numeric(usage?.opencode?.retries),
+    failures: numeric(usage?.opencode?.failures),
+    lastError: usage?.opencode?.last_error,
+    successfulCalls: numeric(usage?.opencode?.calls)
   };
   if (!eventsText) {
     return diagnostics;

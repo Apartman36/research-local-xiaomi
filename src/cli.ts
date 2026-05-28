@@ -37,6 +37,7 @@ export function createProgram(): Command {
   .option("--output-dir <path>", "run output root directory", "./runs")
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
   .option("--max-tasks <n>", "cap researcher tasks after planning")
+  .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
   .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -60,6 +61,7 @@ export function createProgram(): Command {
         outputDir: options.outputDir as string | undefined,
         maxOutputTokens: options.maxOutputTokens as string | undefined,
         maxTasks: options.maxTasks as string | undefined,
+        quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         opencodeRetries: options.opencodeRetries as string | undefined,
         xiaomiTimeoutMs: options.xiaomiTimeoutMs as string | undefined,
@@ -69,6 +71,7 @@ export function createProgram(): Command {
         dryRun: Boolean(options.dryRun),
         verbose: Boolean(options.verbose)
       });
+      printQuotaStartupWarnings(config);
       const apiKey = config.dryRun ? "dry-run" : requireApiKey();
       const result = await runResearch(config, apiKey);
       printRunSummary(result);
@@ -194,6 +197,7 @@ export function createProgram(): Command {
     .option("--no-review-report", "skip report review QA artifacts")
     .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
     .option("--max-tasks <n>", "cap researcher tasks after planning")
+    .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
     .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
     .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
     .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -342,6 +346,7 @@ export async function printFollowUpCommand(
     outputDir: options.outputDir,
     maxOutputTokens: options.maxOutputTokens,
     maxTasks: options.maxTasks,
+    quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
     opencodeTimeoutMs: options.opencodeTimeoutMs,
     opencodeRetries: options.opencodeRetries,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs,
@@ -358,6 +363,7 @@ export async function printFollowUpCommand(
   });
   const apiKey = deps.apiKey ?? requireApiKey();
   const runWorkflow = deps.runWorkflow ?? runResearch;
+  printQuotaStartupWarnings(config);
   const child = await runWorkflow(config, apiKey);
   return [
     `Follow-up prompt written: ${result.path}`,
@@ -399,6 +405,7 @@ type FollowUpCommandOptions = {
   reviewReport?: boolean;
   maxOutputTokens?: string;
   maxTasks?: string;
+  quotaMode?: string;
   opencodeTimeoutMs?: string;
   opencodeRetries?: string;
   xiaomiTimeoutMs?: string;
@@ -469,6 +476,7 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
   console.log(`Focus: ${result.focus}`);
   console.log(`Search provider: ${result.searchProvider}`);
   console.log(`Researcher mode: ${result.researcherMode}`);
+  console.log(`Quota mode: ${result.usage.quotaMode ?? "normal"}`);
   console.log(`Unique sources: ${result.usage.uniqueSources}`);
   console.log(`Sources used in report: ${result.usage.sourcesUsedInReport}`);
   console.log(`Citation lint: ${result.lintOk ? "ok" : "failed"}`);
@@ -494,10 +502,24 @@ function printRunSummary(result: Awaited<ReturnType<typeof runResearch>>): void 
       console.log(`OpenCode tokens: ${result.usage.opencode.tokens.total}`);
     }
   }
+  if (result.usage.tokenAccounting) {
+    console.log(`Estimated total tokens: ${result.usage.tokenAccounting.total.estimatedTotalTokens}`);
+    console.log(`Token accounting completeness: ${result.usage.tokenAccounting.total.tokenAccountingCompleteness}`);
+    console.log(`Quota risk: ${result.usage.tokenAccounting.quotaRiskLevel}`);
+    for (const warning of result.usage.tokenAccounting.warnings) {
+      console.log(`Token accounting warning: ${warning}`);
+    }
+  }
   console.log(`Researcher calls: ${result.usage.callsByPhase.researcher ?? 0}`);
   console.log(`Report reviewer calls: ${result.usage.callsByPhase.reportReviewer ?? 0}`);
   console.log(`Report review: ${formatReportReview(result.reportReview)}`);
   console.log(`Duration: ${result.usage.duration_seconds ?? 0}`);
+}
+
+function printQuotaStartupWarnings(config: RunConfig): void {
+  if (config.quotaMode === "conservative" && config.profile.name === "deep500" && !config.maxTasks) {
+    console.warn("Warning: conservative quota mode with deep500 can consume many OpenCode attempts; set --max-tasks for tighter control.");
+  }
 }
 
 function formatReportReview(reportReview: Awaited<ReturnType<typeof runResearch>>["reportReview"]): string {
