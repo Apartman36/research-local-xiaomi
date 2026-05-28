@@ -173,7 +173,18 @@ corepack pnpm research-xm resume latest `
 [console]::beep(880,700)
 ```
 
-Resume uses the same run directory and `state.json`. It can resume from `writer`, `reportReviewer`, `citationLint`, and `summary` when required artifacts exist. It does not resume incomplete OpenCode search/extraction work yet and does not restart expensive stages unless a future explicit restart option is added.
+Resume uses the same run directory and requires an existing `state.json`. It can resume from `writer`, `reportReviewer`, `citationLint`, and `summary` when required artifacts exist. Legacy runs created before state support fail read-only with a missing-state message; `resume` does not create or import state for them. Completed runs report that there is nothing to resume. It does not resume incomplete OpenCode search/extraction work yet and does not restart expensive stages unless a future explicit restart option is added.
+
+```powershell
+corepack pnpm research-xm resume 2026-05-28T09-13-54-582Z-xm `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+`latest` is resolved from the run ID timestamp first, then stable run metadata such as `config.json`, and only falls back to directory modified time when no stable timestamp exists. Writing `follow_up_prompt.md` or `state.json` into an older run should not make it latest. If `latest` is surprising, pass an explicit run ID.
 
 The default search provider is `opencode-web`:
 
@@ -468,8 +479,8 @@ The tool keeps normalized artifacts that are useful for debugging without archiv
 - The report reviewer is QA only; it does not revise `report.md`.
 - `research-xm follow-up <run> --write-prompt-only` only writes a prompt artifact; it does not execute a new run.
 - `research-xm follow-up <run> --execute` runs one child follow-up only; multi-depth recursion is intentionally not implemented. If `latest` is already a child, run the suggested parent command using `parentRunId`.
-- `research-xm resume <run>` resumes only writer, report reviewer, citation lint, and summary failures when saved artifacts are present.
-- Resume does not recover incomplete search/extraction stages yet.
+- `research-xm resume <run>` resumes only writer, report reviewer, citation lint, and summary failures when saved artifacts and `state.json` are present.
+- Resume does not recover incomplete search/extraction stages or import legacy missing-state runs yet.
 - Knowledge files are human/agent-maintained seeds; there is no automated knowledge append stage yet.
 - The Codex research workflow is controlled and decision-point based; it does not implement autonomous self-modification.
 - `research-xm` never edits source code or creates commits.

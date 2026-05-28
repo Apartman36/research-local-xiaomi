@@ -9,6 +9,8 @@
 - Added safe `research-xm follow-up <run> --write-prompt-only` prompt generation.
 - Added explicit `research-xm follow-up <run> --execute` child runs with parent lineage metadata.
 - Added `state.json` checkpoints and `research-xm resume <run>` for late-stage writer/reviewer/citation/summary recovery.
+- Fixed resume so missing-state legacy runs, completed runs, and unsupported early-stage states are validated read-only before any `state.json` or event mutation.
+- Changed `latest` run resolution to prefer stable run timestamps over directory modified time so follow-up prompt writes do not reorder runs.
 - Added `--xiaomi-timeout-ms` and `--writer-timeout-ms` for role call timeout control.
 - Replaced future report reviewer scoring with `readinessScore` on the `-2..2` scale while preserving old `qualityScore` display.
 - Normalized invalid reviewer scores conservatively instead of clamping high invalid values into `strong`.

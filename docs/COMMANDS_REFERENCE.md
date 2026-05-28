@@ -26,7 +26,7 @@ research-xm smoke
 - `resume <run>` continues a failed writer, report reviewer, citation lint, or summary stage from existing artifacts in the same run directory.
 - `smoke` tests Xiaomi chat, or Xiaomi native Web Search with `--web`.
 
-`<run>` may be `latest` or an explicit run ID.
+`<run>` may be `latest` or an explicit run ID. `latest` uses the timestamp embedded in run IDs such as `2026-05-28T09-13-54-582Z-xm` before considering stable metadata from artifacts, and falls back to directory modified time only when no stable timestamp is available. If `latest` is surprising, pass an explicit run ID.
 
 ## Common run profiles
 
@@ -262,6 +262,15 @@ corepack pnpm research-xm resume latest `
 [console]::beep(880,700)
 ```
 
+```powershell
+corepack pnpm research-xm resume 2026-05-28T09-13-54-582Z-xm `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
 Supported resume stages:
 
 - `writer`: requires `plan.json`, `sources.json`, `evidence.json`, and `critique.json`.
@@ -269,7 +278,7 @@ Supported resume stages:
 - `citationLint`: requires `report.md` and `sources.json`.
 - `summary`: regenerates `run_summary.md` from available artifacts.
 
-Resume writes/updates `state.json`, appends resume events to `events.jsonl`, and does not rerun planner/search/researcher/critic for supported late-stage failures. It does not resume incomplete OpenCode search/extraction work yet.
+Resume only works for runs created after `state.json` support was added. Legacy runs without `state.json` fail read-only and are not mutated. Completed runs report that there is nothing to resume. After a supported stage is selected, resume writes/updates `state.json`, appends resume events to `events.jsonl`, and does not rerun planner/search/researcher/critic for supported late-stage failures. It does not resume incomplete OpenCode search/extraction work yet.
 
 ## Prompt locations
 

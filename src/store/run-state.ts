@@ -46,16 +46,19 @@ export class RunStateTracker {
     const filePath = path.join(config.runDir, "state.json");
     try {
       const state = JSON.parse(await readFile(filePath, "utf8")) as RunStateFile;
-      return new RunStateTracker(filePath, {
-        ...state,
-        artifacts: { ...RUN_STATE_ARTIFACTS, ...state.artifacts }
-      });
+      return RunStateTracker.fromFileState(filePath, state);
     } catch (error) {
       if (isMissingFileError(error)) {
         return RunStateTracker.create(config);
       }
       throw error;
     }
+  }
+
+  static async load(runDir: string): Promise<RunStateTracker> {
+    const filePath = path.join(runDir, "state.json");
+    const state = JSON.parse(await readFile(filePath, "utf8")) as RunStateFile;
+    return RunStateTracker.fromFileState(filePath, state);
   }
 
   get snapshot(): RunStateFile {
@@ -117,6 +120,13 @@ export class RunStateTracker {
 
   private async persist(): Promise<void> {
     await writeJson(this.filePath, this.state);
+  }
+
+  private static fromFileState(filePath: string, state: RunStateFile): RunStateTracker {
+    return new RunStateTracker(filePath, {
+      ...state,
+      artifacts: { ...RUN_STATE_ARTIFACTS, ...state.artifacts }
+    });
   }
 }
 

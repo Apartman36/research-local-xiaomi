@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -21,6 +21,27 @@ describe("follow-up command", () => {
     expect(prompt).toContain("- Parent run ID: 2026-05-27T21-31-57-984Z-xm");
     expect(prompt).toContain("Independent benchmarks");
     expect(prompt).toContain("Check maintainer issue threads");
+  });
+
+  it("uses run id timestamp for latest after an older parent prompt write changes mtime", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const oldRunId = "2026-05-27T21-31-57-984Z-xm";
+    const newerRunId = "2026-05-28T21-31-57-984Z-xm";
+    const oldRunDir = path.join(outputDir, oldRunId);
+    const newerRunDir = path.join(outputDir, newerRunId);
+    await mkdir(oldRunDir);
+    await mkdir(newerRunDir);
+    await writeCompleteArtifacts(oldRunDir);
+    await writeCompleteArtifacts(newerRunDir);
+    await writeFile(path.join(oldRunDir, "follow_up_prompt.md"), "# Existing parent follow-up prompt\n", "utf8");
+    await touchRunDir(oldRunDir, "2026-05-29T00:00:00.000Z");
+    await touchRunDir(newerRunDir, "2026-05-28T21:31:57.984Z");
+
+    const output = await printFollowUpCommand("latest", { outputDir, writePromptOnly: true });
+
+    expect(output).toBe(`Follow-up prompt written: ${path.join(newerRunDir, "follow_up_prompt.md")}\n`);
+    const prompt = await readFile(path.join(newerRunDir, "follow_up_prompt.md"), "utf8");
+    expect(prompt).toContain(`- Parent run ID: ${newerRunId}`);
   });
 
   it("handles a missing report review gracefully", async () => {
@@ -345,4 +366,9 @@ async function writeCompleteArtifacts(runDir: string, options: { reportReview?: 
     );
     await writeFile(path.join(runDir, "report_review.md"), "# Report Review\n\nQuality score: 71\n", "utf8");
   }
+}
+
+async function touchRunDir(runDir: string, isoTimestamp: string): Promise<void> {
+  const timestamp = new Date(isoTimestamp);
+  await utimes(runDir, timestamp, timestamp);
 }

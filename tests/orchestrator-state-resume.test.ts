@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -112,6 +112,90 @@ describe("orchestrator state and resume", () => {
     expect(events).toContain("\"type\":\"resume_completed\"");
   });
 
+  it.each([
+    ["reportReviewer", false, true],
+    ["citationLint", false, false],
+    ["summary", false, false]
+  ] as const)("resumes a failed %s run from existing artifacts", async (stage, expectWriter, expectReviewer) => {
+    const config = await testConfig();
+    await writeResumableArtifacts(config, stage);
+
+    const result = await resumeResearch(config.runDir, "test-key", {});
+
+    expect(result.runId).toBe(config.runId);
+    expect(mocks.runPlanner).not.toHaveBeenCalled();
+    expect(mocks.runResearchTask).not.toHaveBeenCalled();
+    expect(mocks.runCritic).not.toHaveBeenCalled();
+    expect(mocks.runWriter).toHaveBeenCalledTimes(expectWriter ? 1 : 0);
+    expect(mocks.runReportReviewer).toHaveBeenCalledTimes(expectReviewer ? 1 : 0);
+    const state = JSON.parse(await readFile(path.join(config.runDir, "state.json"), "utf8"));
+    expect(state.status).toBe("completed");
+  });
+
+  it("does not create state or append events when a legacy run has no state file", async () => {
+    const config = await testConfig();
+    await writeLegacyCompletedArtifacts(config);
+
+    await expect(resumeResearch(config.runDir, "test-key", {})).rejects.toThrow(
+      `Cannot resume run ${config.runId} because state.json is missing. This run may have been created before resume support. Resume is read-only for legacy runs unless state is explicitly imported in a future command.`
+    );
+
+    await expect(fileExists(path.join(config.runDir, "state.json"))).resolves.toBe(false);
+    await expect(fileExists(path.join(config.runDir, "events.jsonl"))).resolves.toBe(false);
+  });
+
+  it("does not mutate completed state when there is nothing to resume", async () => {
+    const config = await testConfig();
+    await writeLegacyCompletedArtifacts(config);
+    const statePath = path.join(config.runDir, "state.json");
+    const originalState = {
+      schemaVersion: 1,
+      runId: config.runId,
+      status: "completed",
+      currentStage: "completed",
+      completedStages: ["planner", "search", "researcher", "critic", "writer", "reportReviewer", "citationLint", "summary"],
+      failedStage: null,
+      lastError: null,
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      canResume: false,
+      artifacts: {}
+    };
+    await writeFile(statePath, JSON.stringify(originalState), "utf8");
+
+    await expect(resumeResearch(config.runDir, "test-key", {})).rejects.toThrow(
+      `Run ${config.runId} is already completed. Nothing to resume.`
+    );
+
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual(originalState);
+    await expect(fileExists(path.join(config.runDir, "events.jsonl"))).resolves.toBe(false);
+  });
+
+  it("does not mutate existing state when resume stage is unsupported", async () => {
+    const config = await testConfig();
+    await writeLegacyCompletedArtifacts(config);
+    const statePath = path.join(config.runDir, "state.json");
+    const originalState = {
+      schemaVersion: 1,
+      runId: config.runId,
+      status: "running",
+      currentStage: "planner",
+      completedStages: [],
+      failedStage: null,
+      lastError: null,
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      canResume: true,
+      artifacts: {}
+    };
+    await writeFile(statePath, JSON.stringify(originalState), "utf8");
+
+    await expect(resumeResearch(config.runDir, "test-key", {})).rejects.toThrow(
+      "Cannot resume from stage planner. Supported stages: writer, reportReviewer, citationLint, summary."
+    );
+
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual(originalState);
+    await expect(fileExists(path.join(config.runDir, "events.jsonl"))).resolves.toBe(false);
+  });
+
   it("fails resume clearly when required writer artifacts are missing", async () => {
     const config = await testConfig();
     await mkdir(config.runDir, { recursive: true });
@@ -154,7 +238,7 @@ async function testConfig() {
   });
 }
 
-async function writeResumableArtifacts(config: Awaited<ReturnType<typeof testConfig>>) {
+async function writeResumableArtifacts(config: Awaited<ReturnType<typeof testConfig>>, failedStage = "writer") {
   await mkdir(config.runDir, { recursive: true });
   await writeFile(path.join(config.runDir, "input.md"), config.prompt, "utf8");
   await writeFile(path.join(config.runDir, "config.json"), JSON.stringify(stripPrompt(config)), "utf8");
@@ -163,22 +247,52 @@ async function writeResumableArtifacts(config: Awaited<ReturnType<typeof testCon
   await writeFile(path.join(config.runDir, "sources.json"), JSON.stringify(sampleSources()), "utf8");
   await writeFile(path.join(config.runDir, "evidence.json"), JSON.stringify(sampleEvidence()), "utf8");
   await writeFile(path.join(config.runDir, "critique.json"), JSON.stringify(sampleCritique()), "utf8");
+  if (failedStage !== "writer") {
+    await writeFile(path.join(config.runDir, "report.md"), "# Topic\n\nReport with a citation [1].\n", "utf8");
+  }
+  if (failedStage === "citationLint" || failedStage === "summary") {
+    await writeFile(path.join(config.runDir, "report_review.json"), JSON.stringify(sampleReview()), "utf8");
+    await writeFile(path.join(config.runDir, "report_review.md"), "# Report Review\n\nUsable.\n", "utf8");
+  }
+  if (failedStage === "summary") {
+    await writeFile(path.join(config.runDir, "citation_lint.json"), JSON.stringify({ ok: true, citedNumbers: [1], unknownNumbers: [], sourcesUsed: 1 }), "utf8");
+  }
   await writeFile(
     path.join(config.runDir, "state.json"),
     JSON.stringify({
       schemaVersion: 1,
       runId: config.runId,
       status: "failed",
-      currentStage: "writer",
+      currentStage: failedStage,
       completedStages: ["planner", "search", "researcher", "critic"],
-      failedStage: "writer",
-      lastError: "writer timeout",
+      failedStage,
+      lastError: `${failedStage} failed`,
       updatedAt: "2026-05-28T00:00:00.000Z",
       canResume: true,
       artifacts: {}
     }),
     "utf8"
   );
+}
+
+async function writeLegacyCompletedArtifacts(config: Awaited<ReturnType<typeof testConfig>>) {
+  await mkdir(config.runDir, { recursive: true });
+  await writeFile(path.join(config.runDir, "input.md"), config.prompt, "utf8");
+  await writeFile(path.join(config.runDir, "config.json"), JSON.stringify(stripPrompt(config)), "utf8");
+  await writeFile(path.join(config.runDir, "report.md"), "# Legacy Report\n", "utf8");
+  await writeFile(path.join(config.runDir, "run_summary.md"), "# Legacy Summary\n", "utf8");
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function stripPrompt(config: Awaited<ReturnType<typeof testConfig>>) {

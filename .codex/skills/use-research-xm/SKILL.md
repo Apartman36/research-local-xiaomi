@@ -155,7 +155,18 @@ corepack pnpm research-xm resume latest `
 [console]::beep(880,700)
 ```
 
-Resume reads `state.json`, operates in the same run directory, appends resume events to `events.jsonl`, and supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures when required artifacts exist. It does not resume incomplete OpenCode search/extraction work yet.
+Resume requires an existing `state.json`, operates in the same run directory, and supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures when required artifacts exist. Legacy runs without `state.json` fail read-only and are not mutated; completed runs report that there is nothing to resume. After a supported stage is selected, resume appends events to `events.jsonl` and updates `state.json`. It does not resume incomplete OpenCode search/extraction work yet.
+
+```powershell
+corepack pnpm research-xm resume 2026-05-28T09-13-54-582Z-xm `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+`latest` uses the run ID timestamp before directory modified time. If follow-up prompt writes or other artifact changes make `latest` surprising, pass an explicit run ID.
 
 ## How to use findings
 

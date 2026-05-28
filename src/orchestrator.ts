@@ -210,12 +210,20 @@ export type ResumeOptions = {
 
 export async function resumeResearch(runDir: string, apiKey: string, options: ResumeOptions = {}): Promise<RunResult> {
   const config = await loadResumableConfig(runDir, options);
-  await createRunDirectory(config.runDir);
-  const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
-  const state = await RunStateTracker.loadOrCreate(config);
-  const snapshot = (await readRunState(config.runDir)) ?? state.snapshot;
+  const snapshot = await readRunState(config.runDir);
+  if (!snapshot) {
+    throw new Error(
+      `Cannot resume run ${config.runId} because state.json is missing. This run may have been created before resume support. Resume is read-only for legacy runs unless state is explicitly imported in a future command.`
+    );
+  }
+  if (snapshot.status === "completed" || snapshot.currentStage === "completed") {
+    throw new Error(`Run ${config.runId} is already completed. Nothing to resume.`);
+  }
   const failedStage = snapshot.failedStage ?? snapshot.currentStage;
   const startStage = normalizeResumeStage(failedStage);
+  await createRunDirectory(config.runDir);
+  const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
+  const state = await RunStateTracker.load(config.runDir);
   const usage = new UsageTracker(new Date().toISOString(), config.profile.name, config.model);
 
   await events.log("resume_started", { runId: config.runId, failedStage });

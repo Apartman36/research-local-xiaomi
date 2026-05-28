@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,9 +7,14 @@ import { printSummaryCommand } from "../src/cli.js";
 describe("summary command", () => {
   it("prints an existing latest run summary", async () => {
     const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-summary-command-"));
-    const runDir = path.join(outputDir, "2026-05-26T21-31-57-984Z-xm");
+    const oldRunDir = path.join(outputDir, "2026-05-26T21-31-57-984Z-xm");
+    const runDir = path.join(outputDir, "2026-05-27T21-31-57-984Z-xm");
+    await mkdir(oldRunDir);
     await mkdir(runDir);
+    await writeFile(path.join(oldRunDir, "run_summary.md"), "# Older Summary\n", "utf8");
     await writeFile(path.join(runDir, "run_summary.md"), "# Existing Summary\n", "utf8");
+    await touchRunDir(oldRunDir, "2026-05-29T00:00:00.000Z");
+    await touchRunDir(runDir, "2026-05-27T21:31:57.984Z");
 
     const output = await printSummaryCommand("latest", { outputDir });
 
@@ -43,3 +48,8 @@ describe("summary command", () => {
     expect(output).toBe(`${path.join(runDir, "run_summary.md")}\n`);
   });
 });
+
+async function touchRunDir(runDir: string, isoTimestamp: string): Promise<void> {
+  const timestamp = new Date(isoTimestamp);
+  await utimes(runDir, timestamp, timestamp);
+}

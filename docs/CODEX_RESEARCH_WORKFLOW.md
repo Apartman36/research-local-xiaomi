@@ -102,7 +102,18 @@ corepack pnpm research-xm resume latest `
 [console]::beep(880,700)
 ```
 
-`resume` uses the same run directory, reads `state.json`, appends resume events to `events.jsonl`, and currently supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures. It does not resume incomplete OpenCode search/extraction work yet.
+`resume` uses the same run directory and requires an existing `state.json`. It currently supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures. Legacy runs without `state.json` fail read-only and are not mutated; completed runs report that there is nothing to resume. After a supported stage is selected, resume appends resume events to `events.jsonl` and updates `state.json`. It does not resume incomplete OpenCode search/extraction work yet.
+
+```powershell
+corepack pnpm research-xm resume 2026-05-28T09-13-54-582Z-xm `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+`latest` resolution is based on the run ID timestamp first, then stable artifact metadata, and only falls back to directory modified time when no stable timestamp exists. Writing `follow_up_prompt.md` to an old parent run should not make that parent the latest run. If `latest` resolves unexpectedly, pass an explicit run ID.
 
 Use Context7 MCP for current library/API documentation and examples when changing code against external packages. Context7 is not a replacement for `research-xm`: it answers library documentation questions, while `research-xm` produces sourced research artifacts and follow-up recommendations.
 

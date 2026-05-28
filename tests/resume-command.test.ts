@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -7,9 +7,14 @@ import { printResumeCommand } from "../src/cli.js";
 describe("resume command", () => {
   it("resumes the latest run", async () => {
     const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-resume-"));
+    const oldRunId = "2026-05-27T21-31-57-984Z-xm";
     const runId = "2026-05-28T21-31-57-984Z-xm";
+    const oldRunDir = path.join(outputDir, oldRunId);
     const runDir = path.join(outputDir, runId);
+    await mkdir(oldRunDir);
     await mkdir(runDir);
+    await touchRunDir(oldRunDir, "2026-05-29T00:00:00.000Z");
+    await touchRunDir(runDir, "2026-05-28T21:31:57.984Z");
     await writeFile(path.join(runDir, "state.json"), JSON.stringify({ failedStage: "writer" }), "utf8");
     const resumeWorkflow = vi.fn(async (resolvedRunDir: string) => ({
       runId,
@@ -70,6 +75,11 @@ describe("resume command", () => {
     });
   });
 });
+
+async function touchRunDir(runDir: string, isoTimestamp: string): Promise<void> {
+  const timestamp = new Date(isoTimestamp);
+  await utimes(runDir, timestamp, timestamp);
+}
 
 function minimalUsage() {
   return {
