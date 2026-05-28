@@ -17,4 +17,12 @@ describe("CLI help", () => {
     expect(followUpCommand?.helpInformation()).toContain("--execute");
     expect(followUpCommand?.helpInformation()).toContain("--xiaomi-timeout-ms <ms>");
   });
+
+  it("documents the resume command", () => {
+    const resumeCommand = createProgram().commands.find((command) => command.name() === "resume");
+
+    expect(resumeCommand?.helpInformation()).toContain("resume");
+    expect(resumeCommand?.helpInformation()).toContain("--writer-timeout-ms <ms>");
+    expect(resumeCommand?.helpInformation()).toContain("--no-review-report");
+  });
 });

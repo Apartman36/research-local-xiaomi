@@ -111,6 +111,17 @@ describe("run summary", () => {
     const markdown = await readFile(result.path, "utf8");
 
     expect(markdown).toContain("- Report review parsing: fallback");
+    expect(markdown).toContain("- Report review raw output: ./report_review_raw.txt");
+  });
+
+  it("shows conservative reviewer validation warnings", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { validationWarning: "invalid readinessScore; normalized conservatively" });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Report review warning: invalid readinessScore; normalized conservatively");
   });
 });
 
@@ -120,7 +131,7 @@ async function fixtureRunDir(): Promise<string> {
 
 async function writeCompleteArtifacts(
   runDir: string,
-  options: { reportReview?: boolean; legacyQualityScore?: boolean; parseFallback?: boolean } = {}
+  options: { reportReview?: boolean; legacyQualityScore?: boolean; parseFallback?: boolean; validationWarning?: string } = {}
 ): Promise<void> {
   const config = {
     runId: path.basename(runDir),
@@ -210,7 +221,9 @@ async function writeCompleteArtifacts(
     ],
     recommendations: ["Investigate independent benchmarks", "Check pricing", "Validate API limits", "Plan follow-up"],
     readyForUse: false,
-    parseFallback: options.parseFallback
+    parseFallback: options.parseFallback,
+    rawOutputPath: options.parseFallback ? "./report_review_raw.txt" : undefined,
+    validationWarning: options.validationWarning
   };
 
   await writeFile(path.join(runDir, "config.json"), JSON.stringify(config), "utf8");

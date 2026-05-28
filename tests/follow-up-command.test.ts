@@ -151,6 +151,78 @@ describe("follow-up command", () => {
     expect(runWorkflow).toHaveBeenCalledTimes(1);
     expect((runWorkflow.mock.calls[0]?.[0] as RunConfig).parentRunId).toBe("2026-05-27T21-31-57-984Z-xm");
   });
+
+  it("rejects latest follow-up execution from an existing child run with parent guidance", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const parentRunId = "2026-05-27T21-31-57-984Z-xm";
+    const childRunId = "2026-05-28T21-31-57-984Z-xm";
+    const childDir = path.join(outputDir, childRunId);
+    await mkdir(childDir);
+    await writeCompleteArtifacts(childDir);
+    await writeFile(
+      path.join(childDir, "config.json"),
+      JSON.stringify({
+        runId: childRunId,
+        parentRunId,
+        isFollowUpRun: true,
+        followUpDepth: 1
+      }),
+      "utf8"
+    );
+
+    await expect(
+      printFollowUpCommand("latest", { outputDir, writePromptOnly: false, execute: true })
+    ).rejects.toThrow(
+      `Latest run ${childRunId} is already a follow-up run at depth 1.\nFollow-up execution is limited to depth 1 in this release.\nUse the parent run instead:\nresearch-xm follow-up ${parentRunId} --execute`
+    );
+  });
+
+  it("rejects explicit child follow-up execution with parent guidance", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const parentRunId = "2026-05-27T21-31-57-984Z-xm";
+    const childRunId = "2026-05-28T21-31-57-984Z-xm";
+    const childDir = path.join(outputDir, childRunId);
+    await mkdir(childDir);
+    await writeCompleteArtifacts(childDir);
+    await writeFile(
+      path.join(childDir, "config.json"),
+      JSON.stringify({
+        runId: childRunId,
+        parentRunId,
+        isFollowUpRun: true,
+        followUpDepth: 1
+      }),
+      "utf8"
+    );
+
+    await expect(
+      printFollowUpCommand(childRunId, { outputDir, writePromptOnly: false, execute: true })
+    ).rejects.toThrow(
+      `Run ${childRunId} is already a follow-up run at depth 1.\nFollow-up execution is limited to depth 1 in this release.\nUse the parent run instead:\nresearch-xm follow-up ${parentRunId} --execute`
+    );
+  });
+
+  it("still allows prompt-only generation from a child follow-up run", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "research-xm-follow-up-"));
+    const childRunId = "2026-05-28T21-31-57-984Z-xm";
+    const childDir = path.join(outputDir, childRunId);
+    await mkdir(childDir);
+    await writeCompleteArtifacts(childDir);
+    await writeFile(
+      path.join(childDir, "config.json"),
+      JSON.stringify({
+        runId: childRunId,
+        parentRunId: "2026-05-27T21-31-57-984Z-xm",
+        isFollowUpRun: true,
+        followUpDepth: 1
+      }),
+      "utf8"
+    );
+
+    const output = await printFollowUpCommand(childRunId, { outputDir, writePromptOnly: true });
+
+    expect(output).toBe(`Follow-up prompt written: ${path.join(childDir, "follow_up_prompt.md")}\n`);
+  });
 });
 
 function minimalUsage() {

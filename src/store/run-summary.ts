@@ -12,6 +12,8 @@ const ARTIFACTS = [
   "critique.json",
   "usage.json",
   "events.jsonl",
+  "state.json",
+  "citation_lint.json",
   "findings"
 ] as const;
 
@@ -149,7 +151,9 @@ function renderRunSummary(context: RunSummaryContext): string {
     `- Partial run: ${partial ? "yes" : "no"}`,
     `- Report review readyForUse: ${review ? String(review.readyForUse) : "unavailable"}`,
     `- ${formatReviewScoreLine(review)}`,
+    ...(review?.validationWarning ? [`- Report review warning: ${formatReviewWarning(review.validationWarning)}`] : []),
     ...(review?.parseFallback ? ["- Report review parsing: fallback"] : []),
+    ...(review?.parseFallback ? ["- Report review raw output: ./report_review_raw.txt"] : []),
     "",
     "## Usage",
     "",
@@ -282,9 +286,17 @@ function artifactLabel(artifact: string): string {
     "critique.json": "Critique",
     "usage.json": "Usage",
     "events.jsonl": "Events",
+    "state.json": "State",
+    "citation_lint.json": "Citation lint",
     findings: "Findings"
   };
   return labels[artifact] ?? artifact;
+}
+
+function formatReviewWarning(warning: string): string {
+  return warning.includes("invalid readinessScore")
+    ? "invalid readinessScore; normalized conservatively"
+    : warning;
 }
 
 async function readOptionalJson<T = any>(filePath: string): Promise<T | undefined> {

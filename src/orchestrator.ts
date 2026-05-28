@@ -1,4 +1,5 @@
 import path from "node:path";
+import { access, readFile } from "node:fs/promises";
 import { lintCitations } from "./evidence/citation-linter.js";
 import { dedupeSources } from "./evidence/dedupe-sources.js";
 import { citationIndexBySourceId, sourceIdByCanonicalUrl } from "./evidence/source-ids.js";
@@ -12,9 +13,10 @@ import type { SearchProvider } from "./search/search-provider.js";
 import { isXiaomiNativeWebSearchDisabled, XiaomiNativeWebSearchProvider } from "./search/xiaomi-native-websearch.js";
 import { EventLogger } from "./store/events.js";
 import { generateRunSummary, getRunSummaryPath } from "./store/run-summary.js";
+import { readRunState, RunStateTracker } from "./store/run-state.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
-import type { Critique, EvidenceClaim, EvidenceFile, Finding, Plan, ReportReview, RunConfig, SearchTask, Source, UsageSummary } from "./types.js";
+import type { CitationLintResult, Critique, EvidenceClaim, EvidenceFile, Finding, Plan, ReportReview, RunConfig, RunStage, SearchTask, Source, UsageSummary } from "./types.js";
 
 export type RunResult = {
   runId: string;
@@ -34,212 +36,396 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
   await createRunDirectory(config.runDir);
   const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
   const usage = new UsageTracker(config.startedAt, config.profile.name, config.model);
+  const state = await RunStateTracker.create(config);
   let completed = false;
 
   try {
-  await events.log("research_started", {
-    runId: config.runId,
-    profile: config.profile.name,
-    focus: config.focus,
-    searchProvider: config.searchProvider,
-    model: config.model,
-    researcherMode: config.researcherMode,
-    dryRun: config.dryRun
-  });
-  await events.log("search_provider_selected", { provider: config.searchProvider });
-  await writeTextArtifact(config.runDir, "input.md", config.prompt);
-  await writeJsonArtifact(config.runDir, "config.json", sanitizeConfig(config));
+    await events.log("research_started", {
+      runId: config.runId,
+      profile: config.profile.name,
+      focus: config.focus,
+      searchProvider: config.searchProvider,
+      model: config.model,
+      researcherMode: config.researcherMode,
+      dryRun: config.dryRun
+    });
+    await events.log("search_provider_selected", { provider: config.searchProvider });
+    await writeTextArtifact(config.runDir, "input.md", config.prompt);
+    await writeJsonArtifact(config.runDir, "config.json", sanitizeConfig(config));
 
-  await events.log("planner_started");
-  const plannerResult = await runPlanner({
-    apiKey,
-    baseUrl: config.apiBaseUrl,
-    model: config.roleModels.planner,
-    maxCompletionTokens: config.maxOutputTokens.planner,
-    timeoutMs: config.xiaomiTimeoutMs,
-    prompt: config.prompt,
-    profile: config.profile,
-    focus: config.focus,
-    dryRun: config.dryRun
-  });
-  usage.addCall("planner", plannerResult.usage);
-  if (plannerResult.parseFailed) {
-    await events.log("planner_parse_failed", { error: plannerResult.parseError ?? "Planner response could not be parsed." });
-    await events.log("planner_fallback_used");
-  }
-  for (const coercion of plannerResult.coercions ?? []) {
-    await events.log("planner_focus_coerced", coercion);
-  }
-  const plannedTaskCount = plannerResult.plan.searchTasks.length;
-  if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
-    plannerResult.plan.searchTasks = plannerResult.plan.searchTasks.slice(0, config.maxTasks);
-    await events.log("researcher_tasks_capped", { plannedTaskCount, maxTasks: config.maxTasks, taskCount: plannerResult.plan.searchTasks.length });
-  }
-  await events.log("planner_completed", { taskCount: plannerResult.plan.searchTasks.length, plannedTaskCount });
-  await writeJsonArtifact(config.runDir, "plan.json", plannerResult.plan);
-  await writeJsonArtifact(config.runDir, "queries.json", plannerResult.plan.searchTasks);
-
-  const findings = await runResearchTasks({
-    config,
-    apiKey,
-    tasks: plannerResult.plan.searchTasks,
-    usage,
-    events
-  });
-
-  let sources = dedupeSources(findings, config.focus);
-  await logDedupedSources(events, findings, sources);
-  let evidence = buildEvidence(findings, sources);
-  await writeJsonArtifact(config.runDir, "sources.json", sources);
-  await writeJsonArtifact(config.runDir, "evidence.json", evidence);
-
-  await events.log("critic_started");
-  let criticResult = await runCritic({
-    apiKey,
-    baseUrl: config.apiBaseUrl,
-    model: config.roleModels.critic,
-    maxCompletionTokens: config.maxOutputTokens.critic,
-    plan: plannerResult.plan,
-    evidence,
-    sources,
-    focus: config.focus,
-    dryRun: config.dryRun,
-    timeoutMs: config.xiaomiTimeoutMs
-  });
-  usage.addCall("critic", criticResult.usage);
-  await logCriticParseFallback(events, criticResult);
-  await events.log("critic_completed", {
-    needsFollowUp: criticResult.critique.needsFollowUp,
-    followUpCount: criticResult.critique.followUpTasks.length
-  });
-
-  const requestedFollowUpTasks = criticResult.critique.followUpTasks;
-  const followUpTasks = requestedFollowUpTasks.filter((task) => task.depth <= config.profile.maxDepth);
-  if (!config.dryRun && criticResult.critique.needsFollowUp && requestedFollowUpTasks.length > 0) {
-    const remainingTaskBudget = typeof config.maxTasks === "number" ? Math.max(0, config.maxTasks - findings.length) : config.profile.initialSubquestions;
-    if (remainingTaskBudget === 0) {
-      await events.log("follow_up_skipped_task_cap_reached", {
-        plannedFollowUpCount: requestedFollowUpTasks.length,
-        maxTasks: config.maxTasks,
-        completedTaskCount: findings.length
-      });
+    await state.start("planner");
+    await events.log("planner_started");
+    const plannerResult = await runPlanner({
+      apiKey,
+      baseUrl: config.apiBaseUrl,
+      model: config.roleModels.planner,
+      maxCompletionTokens: config.maxOutputTokens.planner,
+      timeoutMs: config.xiaomiTimeoutMs,
+      prompt: config.prompt,
+      profile: config.profile,
+      focus: config.focus,
+      dryRun: config.dryRun
+    });
+    usage.addCall("planner", plannerResult.usage);
+    if (plannerResult.parseFailed) {
+      await events.log("planner_parse_failed", { error: plannerResult.parseError ?? "Planner response could not be parsed." });
+      await events.log("planner_fallback_used");
     }
-    const capped = followUpTasks.slice(0, Math.min(config.profile.initialSubquestions, remainingTaskBudget));
-    if (capped.length === 0) {
-      await events.log("researcher_tasks_capped", {
-        plannedFollowUpCount: requestedFollowUpTasks.length,
-        maxTasks: config.maxTasks,
-        taskCount: findings.length
-      });
+    for (const coercion of plannerResult.coercions ?? []) {
+      await events.log("planner_focus_coerced", coercion);
     }
-    if (capped.length > 0) {
-      const gapFindings = await runResearchTasks({ config, apiKey, tasks: capped, usage, events });
-      findings.push(...gapFindings);
-      sources = dedupeSources(findings, config.focus);
-      await logDedupedSources(events, findings, sources);
-      evidence = buildEvidence(findings, sources);
-      await writeJsonArtifact(config.runDir, "sources.json", sources);
-      await writeJsonArtifact(config.runDir, "evidence.json", evidence);
-
-      await events.log("critic_started", { pass: "after_gap_fill" });
-      criticResult = await runCritic({
-        apiKey,
-        baseUrl: config.apiBaseUrl,
-        model: config.roleModels.critic,
-        maxCompletionTokens: config.maxOutputTokens.critic,
-        plan: plannerResult.plan,
-        evidence,
-        sources,
-        focus: config.focus,
-        dryRun: config.dryRun,
-        timeoutMs: config.xiaomiTimeoutMs
-      });
-      usage.addCall("critic", criticResult.usage);
-      await logCriticParseFallback(events, criticResult);
-      await events.log("critic_completed", { pass: "after_gap_fill" });
+    const plannedTaskCount = plannerResult.plan.searchTasks.length;
+    if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
+      plannerResult.plan.searchTasks = plannerResult.plan.searchTasks.slice(0, config.maxTasks);
+      await events.log("researcher_tasks_capped", { plannedTaskCount, maxTasks: config.maxTasks, taskCount: plannerResult.plan.searchTasks.length });
     }
-  }
+    await events.log("planner_completed", { taskCount: plannerResult.plan.searchTasks.length, plannedTaskCount });
+    await writeJsonArtifact(config.runDir, "plan.json", plannerResult.plan);
+    await writeJsonArtifact(config.runDir, "queries.json", plannerResult.plan.searchTasks);
+    await state.complete("planner");
 
-  await writeJsonArtifact(config.runDir, "critique.json", criticResult.critique);
+    await state.start("search");
+    const findings = await runResearchTasks({
+      config,
+      apiKey,
+      tasks: plannerResult.plan.searchTasks,
+      usage,
+      events
+    });
 
-  const failedTasks = findings.filter((finding) => finding.error).length;
-  await events.log("writer_started", { sourceCount: sources.length, partial: failedTasks > 0 });
-  const writerResult = await runWriter({
-    apiKey,
-    baseUrl: config.apiBaseUrl,
-    model: config.roleModels.writer,
-    maxCompletionTokens: config.maxOutputTokens.writer,
-    plan: plannerResult.plan,
-    evidence,
-    critique: criticResult.critique,
-    sources,
-    partial: failedTasks > 0,
-    dryRun: config.dryRun,
-    timeoutMs: config.writerTimeoutMs ?? config.xiaomiTimeoutMs
-  });
-  usage.addCall("writer", writerResult.usage);
-  await writeTextArtifact(config.runDir, "report.md", writerResult.report);
-  await events.log("writer_completed", { bytes: Buffer.byteLength(writerResult.report, "utf8") });
+    let sources = dedupeSources(findings, config.focus);
+    await logDedupedSources(events, findings, sources);
+    let evidence = buildEvidence(findings, sources);
+    await writeJsonArtifact(config.runDir, "sources.json", sources);
+    await writeJsonArtifact(config.runDir, "evidence.json", evidence);
 
-  let reportReview: ReportReview | undefined;
-  if (config.reviewReport) {
-    reportReview = await runReportReviewStage({
+    await state.start("critic");
+    await events.log("critic_started");
+    let criticResult = await runCritic({
+      apiKey,
+      baseUrl: config.apiBaseUrl,
+      model: config.roleModels.critic,
+      maxCompletionTokens: config.maxOutputTokens.critic,
+      plan: plannerResult.plan,
+      evidence,
+      sources,
+      focus: config.focus,
+      dryRun: config.dryRun,
+      timeoutMs: config.xiaomiTimeoutMs
+    });
+    usage.addCall("critic", criticResult.usage);
+    await logCriticParseFallback(events, criticResult);
+    await events.log("critic_completed", {
+      needsFollowUp: criticResult.critique.needsFollowUp,
+      followUpCount: criticResult.critique.followUpTasks.length
+    });
+
+    const requestedFollowUpTasks = criticResult.critique.followUpTasks;
+    const followUpTasks = requestedFollowUpTasks.filter((task) => task.depth <= config.profile.maxDepth);
+    if (!config.dryRun && criticResult.critique.needsFollowUp && requestedFollowUpTasks.length > 0) {
+      const remainingTaskBudget = typeof config.maxTasks === "number" ? Math.max(0, config.maxTasks - findings.length) : config.profile.initialSubquestions;
+      if (remainingTaskBudget === 0) {
+        await events.log("follow_up_skipped_task_cap_reached", {
+          plannedFollowUpCount: requestedFollowUpTasks.length,
+          maxTasks: config.maxTasks,
+          completedTaskCount: findings.length
+        });
+      }
+      const capped = followUpTasks.slice(0, Math.min(config.profile.initialSubquestions, remainingTaskBudget));
+      if (capped.length === 0) {
+        await events.log("researcher_tasks_capped", {
+          plannedFollowUpCount: requestedFollowUpTasks.length,
+          maxTasks: config.maxTasks,
+          taskCount: findings.length
+        });
+      }
+      if (capped.length > 0) {
+        await state.start("researcher");
+        const gapFindings = await runResearchTasks({ config, apiKey, tasks: capped, usage, events });
+        findings.push(...gapFindings);
+        sources = dedupeSources(findings, config.focus);
+        await logDedupedSources(events, findings, sources);
+        evidence = buildEvidence(findings, sources);
+        await writeJsonArtifact(config.runDir, "sources.json", sources);
+        await writeJsonArtifact(config.runDir, "evidence.json", evidence);
+
+        await state.start("critic");
+        await events.log("critic_started", { pass: "after_gap_fill" });
+        criticResult = await runCritic({
+          apiKey,
+          baseUrl: config.apiBaseUrl,
+          model: config.roleModels.critic,
+          maxCompletionTokens: config.maxOutputTokens.critic,
+          plan: plannerResult.plan,
+          evidence,
+          sources,
+          focus: config.focus,
+          dryRun: config.dryRun,
+          timeoutMs: config.xiaomiTimeoutMs
+        });
+        usage.addCall("critic", criticResult.usage);
+        await logCriticParseFallback(events, criticResult);
+        await events.log("critic_completed", { pass: "after_gap_fill" });
+      }
+    }
+    await state.complete("search");
+    await state.complete("researcher");
+
+    await writeJsonArtifact(config.runDir, "critique.json", criticResult.critique);
+    await state.complete("critic");
+
+    const result = await runFinalStages({
       config,
       apiKey,
       events,
       usage,
-      report: writerResult.report,
+      state,
       plan: plannerResult.plan,
       evidence,
       critique: criticResult.critique,
-      sources
+      sources,
+      startStage: "writer",
+      partial: findings.some((finding) => finding.error)
     });
+
+    completed = true;
+    return result;
+  } catch (error) {
+    await state.fail(safeError(error)).catch(() => undefined);
+    throw error;
+  } finally {
+    if (!completed) {
+      await events.log("run_incomplete", { runId: config.runId }).catch(() => undefined);
+    }
+  }
+}
+
+export type ResumeOptions = {
+  notify?: boolean;
+  verbose?: boolean;
+  xiaomiTimeoutMs?: number;
+  writerTimeoutMs?: number;
+  reviewReport?: boolean;
+};
+
+export async function resumeResearch(runDir: string, apiKey: string, options: ResumeOptions = {}): Promise<RunResult> {
+  const config = await loadResumableConfig(runDir, options);
+  await createRunDirectory(config.runDir);
+  const events = new EventLogger(path.join(config.runDir, "events.jsonl"), config.verbose);
+  const state = await RunStateTracker.loadOrCreate(config);
+  const snapshot = (await readRunState(config.runDir)) ?? state.snapshot;
+  const failedStage = snapshot.failedStage ?? snapshot.currentStage;
+  const startStage = normalizeResumeStage(failedStage);
+  const usage = new UsageTracker(new Date().toISOString(), config.profile.name, config.model);
+
+  await events.log("resume_started", { runId: config.runId, failedStage });
+  await events.log("resume_stage_selected", { stage: startStage });
+  try {
+    const artifacts = await loadResumeArtifacts(config.runDir, startStage, events);
+    const result = await runFinalStages({
+      config,
+      apiKey,
+      events,
+      usage,
+      state,
+      plan: artifacts.plan,
+      evidence: artifacts.evidence,
+      critique: artifacts.critique,
+      sources: artifacts.sources,
+      report: artifacts.report,
+      startStage,
+      partial: false
+    });
+    await events.log("resume_completed", { runId: config.runId, stage: startStage });
+    return result;
+  } catch (error) {
+    await state.fail(safeError(error), startStage).catch(() => undefined);
+    await events.log("resume_failed", { runId: config.runId, stage: startStage, error: safeError(error) }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function runFinalStages(params: {
+  config: RunConfig;
+  apiKey: string;
+  events: EventLogger;
+  usage: UsageTracker;
+  state: RunStateTracker;
+  plan: Plan;
+  evidence: EvidenceFile;
+  critique: Critique;
+  sources: Source[];
+  report?: string;
+  startStage: ResumableStage;
+  partial: boolean;
+}): Promise<RunResult> {
+  const startIndex = RESUME_STAGE_ORDER.indexOf(params.startStage);
+  let report = params.report;
+  let reportReview: ReportReview | undefined;
+
+  if (startIndex <= RESUME_STAGE_ORDER.indexOf("writer")) {
+    await params.state.start("writer");
+    await params.events.log("writer_started", { sourceCount: params.sources.length, partial: params.partial });
+    const writerResult = await runWriter({
+      apiKey: params.apiKey,
+      baseUrl: params.config.apiBaseUrl,
+      model: params.config.roleModels.writer,
+      maxCompletionTokens: params.config.maxOutputTokens.writer,
+      plan: params.plan,
+      evidence: params.evidence,
+      critique: params.critique,
+      sources: params.sources,
+      partial: params.partial,
+      dryRun: params.config.dryRun,
+      timeoutMs: params.config.writerTimeoutMs ?? params.config.xiaomiTimeoutMs
+    });
+    params.usage.addCall("writer", writerResult.usage);
+    report = writerResult.report;
+    await writeTextArtifact(params.config.runDir, "report.md", report);
+    await params.events.log("writer_completed", { bytes: Buffer.byteLength(report, "utf8") });
+    await params.state.complete("writer");
   }
 
-  await events.log("citation_lint_started");
-  const lint = lintCitations(writerResult.report, sources);
-  if (!lint.ok) {
-    await events.log("error", { phase: "citation_lint", unknownNumbers: lint.unknownNumbers });
-    console.warn(`Citation lint warning: unknown citation numbers ${lint.unknownNumbers.join(", ")}`);
+  if (!report) {
+    throw new Error("Cannot continue without report.md.");
   }
-  await events.log("citation_lint_completed", lint);
 
-  const finalUsage = usage.finish(sources.length, lint.sourcesUsed);
-  await writeJsonArtifact(config.runDir, "usage.json", finalUsage);
-  await events.log("research_completed", {
-    uniqueSources: sources.length,
+  if (startIndex <= RESUME_STAGE_ORDER.indexOf("reportReviewer")) {
+    await params.state.start("reportReviewer");
+    if (params.config.reviewReport) {
+      reportReview = await runReportReviewStage({
+        config: params.config,
+        apiKey: params.apiKey,
+        events: params.events,
+        usage: params.usage,
+        report,
+        plan: params.plan,
+        evidence: params.evidence,
+        critique: params.critique,
+        sources: params.sources
+      });
+    }
+    await params.state.complete("reportReviewer");
+  } else {
+    reportReview = await readOptionalJson<ReportReview>(path.join(params.config.runDir, "report_review.json"));
+  }
+
+  await params.state.start("citationLint");
+  let lint: CitationLintResult;
+  if (startIndex <= RESUME_STAGE_ORDER.indexOf("citationLint")) {
+    await params.events.log("citation_lint_started");
+    lint = lintCitations(report, params.sources);
+    await writeJsonArtifact(params.config.runDir, "citation_lint.json", lint);
+    if (!lint.ok) {
+      await params.events.log("error", { phase: "citation_lint", unknownNumbers: lint.unknownNumbers });
+      console.warn(`Citation lint warning: unknown citation numbers ${lint.unknownNumbers.join(", ")}`);
+    }
+    await params.events.log("citation_lint_completed", lint);
+  } else {
+    lint = (await readOptionalJson<CitationLintResult>(path.join(params.config.runDir, "citation_lint.json"))) ?? lintCitations(report, params.sources);
+  }
+  await params.state.complete("citationLint");
+
+  const finalUsage = params.usage.finish(params.sources.length, lint.sourcesUsed);
+  await writeJsonArtifact(params.config.runDir, "usage.json", finalUsage);
+  await params.events.log("research_completed", {
+    uniqueSources: params.sources.length,
     sourcesUsedInReport: lint.sourcesUsed,
     totalTokens: finalUsage.total_tokens
   });
+
+  await params.state.start("summary");
   let summaryPath: string | undefined;
   try {
-    const summary = await generateRunSummary(config.runDir);
+    const summary = await generateRunSummary(params.config.runDir);
     summaryPath = summary.path;
-    await events.log("run_summary_written", { path: summary.path });
+    await params.events.log("run_summary_written", { path: summary.path });
+    await params.state.complete("summary");
   } catch (error) {
-    summaryPath = getRunSummaryPath(config.runDir);
-    await events.log("run_summary_failed", { error: safeError(error), path: summaryPath }).catch(() => undefined);
+    summaryPath = getRunSummaryPath(params.config.runDir);
+    await params.events.log("run_summary_failed", { error: safeError(error), path: summaryPath }).catch(() => undefined);
+    throw error;
   }
+  await params.state.completed();
 
-  completed = true;
   return {
-    runId: config.runId,
-    runDir: config.runDir,
-    reportPath: path.join(config.runDir, "report.md"),
-    focus: config.focus,
-    searchProvider: config.searchProvider,
-    researcherMode: config.researcherMode,
+    runId: params.config.runId,
+    runDir: params.config.runDir,
+    reportPath: path.join(params.config.runDir, "report.md"),
+    focus: params.config.focus,
+    searchProvider: params.config.searchProvider,
+    researcherMode: params.config.researcherMode,
     usage: finalUsage,
     lintOk: lint.ok,
     lintUnknownNumbers: lint.unknownNumbers,
     reportReview,
     summaryPath
   };
-  } finally {
-    if (!completed) {
-      await events.log("run_incomplete", { runId: config.runId }).catch(() => undefined);
+}
+
+const RESUME_STAGE_ORDER = ["writer", "reportReviewer", "citationLint", "summary"] as const;
+type ResumableStage = (typeof RESUME_STAGE_ORDER)[number];
+
+function normalizeResumeStage(stage: RunStage): ResumableStage {
+  if (RESUME_STAGE_ORDER.includes(stage as ResumableStage)) {
+    return stage as ResumableStage;
+  }
+  throw new Error(`Cannot resume from stage ${stage}. Supported stages: ${RESUME_STAGE_ORDER.join(", ")}.`);
+}
+
+async function loadResumeArtifacts(runDir: string, stage: ResumableStage, events: EventLogger): Promise<{
+  plan: Plan;
+  sources: Source[];
+  evidence: EvidenceFile;
+  critique: Critique;
+  report?: string;
+}> {
+  const requiredByStage: Record<ResumableStage, string[]> = {
+    writer: ["plan.json", "sources.json", "evidence.json", "critique.json"],
+    reportReviewer: ["plan.json", "sources.json", "evidence.json", "critique.json", "report.md"],
+    citationLint: ["sources.json", "report.md"],
+    summary: []
+  };
+  const missing: string[] = [];
+  for (const artifact of requiredByStage[stage]) {
+    if (!(await fileExists(path.join(runDir, artifact)))) {
+      missing.push(artifact);
     }
   }
+  if (missing.length > 0) {
+    throw new Error(`Cannot resume from stage ${stage} because required artifacts are missing: ${missing.join(", ")}`);
+  }
+
+  const plan = (await readRequiredJson<Plan>(path.join(runDir, "plan.json"), stage)) ?? emptyPlan();
+  const sources = (await readRequiredJson<Source[]>(path.join(runDir, "sources.json"), stage)) ?? [];
+  const evidence = (await readRequiredJson<EvidenceFile>(path.join(runDir, "evidence.json"), stage)) ?? emptyEvidence(sources);
+  const critique = (await readRequiredJson<Critique>(path.join(runDir, "critique.json"), stage)) ?? emptyCritique();
+  const report = await readOptionalText(path.join(runDir, "report.md"));
+  for (const artifact of ["plan.json", "sources.json", "evidence.json", "critique.json", "report.md"]) {
+    if (await fileExists(path.join(runDir, artifact))) {
+      await events.log("resume_artifact_loaded", { artifact });
+    }
+  }
+  return { plan, sources, evidence, critique, report };
+}
+
+async function loadResumableConfig(runDir: string, options: ResumeOptions): Promise<RunConfig> {
+  const persisted = await readRequiredJson<Omit<RunConfig, "prompt">>(path.join(runDir, "config.json"), "writer");
+  if (!persisted) {
+    throw new Error("Cannot resume because config.json is missing.");
+  }
+  const prompt = (await readOptionalText(path.join(runDir, "input.md"))) ?? "";
+  return {
+    ...persisted,
+    prompt,
+    runDir,
+    outputDirRoot: path.dirname(runDir),
+    notify: options.notify ?? persisted.notify,
+    verbose: options.verbose ?? persisted.verbose,
+    xiaomiTimeoutMs: options.xiaomiTimeoutMs ?? persisted.xiaomiTimeoutMs,
+    writerTimeoutMs: options.writerTimeoutMs ?? persisted.writerTimeoutMs,
+    reviewReport: options.reviewReport ?? persisted.reviewReport
+  };
 }
 
 async function runResearchTasks(params: {
@@ -349,7 +535,7 @@ async function runReportReviewStage(params: {
       await params.events.log("report_review_fallback_used");
       if (reviewResult.rawContent) {
         await writeTextArtifact(params.config.runDir, "report_review_raw.txt", reviewResult.rawContent);
-        reviewResult.review.rawOutputPath = path.join(params.config.runDir, "report_review_raw.txt");
+        reviewResult.review.rawOutputPath = "./report_review_raw.txt";
       }
     }
     await writeJsonArtifact(params.config.runDir, "report_review.json", reviewResult.review);
@@ -464,6 +650,74 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
 function sanitizeConfig(config: RunConfig): Omit<RunConfig, "prompt"> {
   const { prompt: _prompt, ...rest } = config;
   return rest;
+}
+
+async function readRequiredJson<T>(filePath: string, _stage: ResumableStage): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as T;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function readOptionalJson<T>(filePath: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as T;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function readOptionalText(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function emptyPlan(): Plan {
+  return { topic: "Resumed run", objective: "Resume available artifacts.", assumptions: [], subquestions: [], searchTasks: [] };
+}
+
+function emptyEvidence(sources: Source[]): EvidenceFile {
+  return { generatedAt: new Date().toISOString(), claims: [], sourceCount: sources.length, rawAnnotationCount: 0 };
+}
+
+function emptyCritique(): Critique {
+  return {
+    summary: "Resume did not require critique artifacts.",
+    weakAreas: [],
+    missingCoverage: [],
+    duplicateEvidence: [],
+    followUpTasks: [],
+    needsFollowUp: false
+  };
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 function safeError(error: unknown): string {

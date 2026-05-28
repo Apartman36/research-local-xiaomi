@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fallbackReportReview, parseReportReviewContent } from "../src/agents/report-reviewer.js";
+import { fallbackReportReview, parseReportReviewContent, renderReportReviewMarkdown } from "../src/agents/report-reviewer.js";
 
 describe("report reviewer parsing", () => {
   it("parses valid report review JSON", () => {
@@ -79,12 +79,12 @@ describe("report reviewer parsing", () => {
     expect(parsed.review.topGaps).toContain("Benchmark gap");
   });
 
-  it("normalizes invalid readinessScore values into the supported scale", () => {
+  it("normalizes invalid readinessScore values conservatively", () => {
     const parsed = parseReportReviewContent(
       JSON.stringify({
         overallAssessment: "Overstated.",
         readyForUse: false,
-        readinessScore: 99,
+        readinessScore: 7,
         scoreLabel: "strong",
         topGaps: [],
         topRecommendations: [],
@@ -94,8 +94,78 @@ describe("report reviewer parsing", () => {
     );
 
     expect(parsed.parseFailed).toBeUndefined();
+    expect(parsed.review.readinessScore).toBe(-1);
+    expect(parsed.review.scoreLabel).toBe("weak");
+    expect(parsed.review.invalidReadinessScore).toBe(7);
+    expect(parsed.review.validationWarning).toContain("invalid readinessScore");
+  });
+
+  it("keeps valid high and low readiness scores", () => {
+    const strong = parseReportReviewContent(
+      JSON.stringify({
+        overallAssessment: "Strong.",
+        readyForUse: true,
+        readinessScore: 2,
+        scoreLabel: "strong"
+      })
+    );
+    const harmful = parseReportReviewContent(
+      JSON.stringify({
+        overallAssessment: "Misleading.",
+        readyForUse: false,
+        readinessScore: -2,
+        scoreLabel: "harmful"
+      })
+    );
+
+    expect(strong.review.readinessScore).toBe(2);
+    expect(strong.review.scoreLabel).toBe("strong");
+    expect(harmful.review.readinessScore).toBe(-2);
+    expect(harmful.review.scoreLabel).toBe("harmful");
+  });
+
+  it("parses numeric string readinessScore consistently", () => {
+    const parsed = parseReportReviewContent(
+      JSON.stringify({
+        overallAssessment: "Strong enough.",
+        readyForUse: true,
+        readinessScore: "2",
+        scoreLabel: "weak"
+      })
+    );
+
     expect(parsed.review.readinessScore).toBe(2);
     expect(parsed.review.scoreLabel).toBe("strong");
+  });
+
+  it("treats missing readinessScore as a conservative parse warning", () => {
+    const parsed = parseReportReviewContent(
+      JSON.stringify({
+        overallAssessment: "Missing score.",
+        readyForUse: false,
+        scoreLabel: "strong"
+      })
+    );
+
+    expect(parsed.parseFailed).toBeUndefined();
+    expect(parsed.review.readinessScore).toBe(-1);
+    expect(parsed.review.scoreLabel).toBe("weak");
+    expect(parsed.review.validationWarning).toContain("missing readinessScore");
+  });
+
+  it("normalizes scoreLabel conflicts from readinessScore", () => {
+    const parsed = parseReportReviewContent(
+      JSON.stringify({
+        overallAssessment: "Useful with caveats.",
+        readyForUse: true,
+        readinessScore: 1,
+        scoreLabel: "strong"
+      })
+    );
+
+    expect(parsed.review.readinessScore).toBe(1);
+    expect(parsed.review.scoreLabel).toBe("useful");
+    expect(parsed.review.validationWarning).toContain("scoreLabel");
   });
 
   it("returns a valid fallback review for malformed JSON", () => {
@@ -108,5 +178,15 @@ describe("report reviewer parsing", () => {
     );
     expect(parsed.review.readinessScore).toBe(-1);
     expect(parsed.review.scoreLabel).toBe("weak");
+  });
+
+  it("renders fallback raw output guidance in report review markdown", () => {
+    const markdown = renderReportReviewMarkdown({
+      ...fallbackReportReview("Report reviewer returned malformed JSON. Raw output was saved for inspection."),
+      rawOutputPath: "./report_review_raw.txt"
+    });
+
+    expect(markdown).toContain("Report review parsing: fallback");
+    expect(markdown).toContain("Report review raw output: ./report_review_raw.txt");
   });
 });

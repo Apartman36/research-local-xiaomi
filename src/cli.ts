@@ -8,7 +8,7 @@ import { buildRunConfig, DEFAULT_BASE_URL, DEFAULT_MODEL, requireApiKey } from "
 import { lintCitations } from "./evidence/citation-linter.js";
 import { writeFollowUpPrompt } from "./follow-up/generate-follow-up-prompt.js";
 import { chat, chatWithWebSearch, extractAnnotations, extractUsage } from "./providers/xiaomi.js";
-import { runResearch, type RunResult } from "./orchestrator.js";
+import { resumeResearch, runResearch, type ResumeOptions, type RunResult } from "./orchestrator.js";
 import { generateRunSummary, getRunSummaryPath, listRunArtifacts } from "./store/run-summary.js";
 import { listRuns, resolveRun } from "./store/run-store.js";
 import type { RunConfig, Source } from "./types.js";
@@ -210,6 +210,31 @@ export function createProgram(): Command {
     });
 
   program
+    .command("resume")
+    .description("Resume a failed run from writer, report reviewer, citation lint, or summary stages.")
+    .argument("<run>", "run id or latest")
+    .option("--output-dir <path>", "run output root directory", "./runs")
+    .option("--review-report", "run report review QA artifacts when resuming", true)
+    .option("--no-review-report", "skip report review QA artifacts when resuming")
+    .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds")
+    .option("--writer-timeout-ms <ms>", "writer Xiaomi call timeout in milliseconds")
+    .option("--notify", "play a completion or failure sound")
+    .option("--verbose", "print debug event metadata")
+    .action(async (run: string, options: ResumeCommandOptions) => {
+      try {
+        process.stdout.write(await printResumeCommand(run, options));
+        if (options.notify) {
+          await playNotification(true);
+        }
+      } catch (error) {
+        if (options.notify) {
+          await playNotification(false);
+        }
+        exitWithError(error);
+      }
+    });
+
+  program
     .command("smoke")
   .description("Run a real Xiaomi API smoke test. Uses basic chat unless --web is passed.")
   .option("--web", "include Xiaomi Web Search")
@@ -296,7 +321,15 @@ export async function printFollowUpCommand(
   const parentConfig = await readOptionalJson(path.join(runDir, "config.json"));
   const parentDepth = typeof parentConfig?.followUpDepth === "number" ? parentConfig.followUpDepth : 0;
   if (parentDepth >= 1) {
-    throw new Error("Follow-up execution is limited to depth 1 in this release.");
+    const runId = path.basename(runDir);
+    const prefix = run === "latest" ? `Latest run ${runId}` : `Run ${runId}`;
+    const parentRunId = typeof parentConfig?.parentRunId === "string" && parentConfig.parentRunId.trim() ? parentConfig.parentRunId : undefined;
+    const guidance = parentRunId
+      ? `Use the parent run instead:\nresearch-xm follow-up ${parentRunId} --execute`
+      : "Choose a non-follow-up parent run manually and run research-xm follow-up <parentRunId> --execute.";
+    throw new Error(
+      `${prefix} is already a follow-up run at depth ${parentDepth}.\nFollow-up execution is limited to depth 1 in this release.\n${guidance}`
+    );
   }
   const config = await buildRunConfig({
     inlinePrompt: result.prompt,
@@ -334,6 +367,26 @@ export async function printFollowUpCommand(
   ].join("\n");
 }
 
+export async function printResumeCommand(
+  run: string,
+  options: ResumeCommandOptions,
+  deps: ResumeCommandDeps = {}
+): Promise<string> {
+  const runDir = await resolveRun(path.resolve(options.outputDir), run);
+  const resumeWorkflow = deps.resumeWorkflow ?? resumeResearch;
+  const apiKey = deps.apiKey ?? requireApiKey();
+  const resumeOptions = normalizeResumeOptions(options);
+  const result = await resumeWorkflow(runDir, apiKey, resumeOptions);
+  return [
+    `Resumed run: ${result.runId}`,
+    `Run directory: ${result.runDir}`,
+    ...(result.summaryPath ? [`Summary: ${result.summaryPath}`] : []),
+    `Report: ${result.reportPath}`,
+    `Citation lint: ${result.lintOk ? "ok" : "failed"}`,
+    ""
+  ].join("\n");
+}
+
 type FollowUpCommandOptions = {
   outputDir: string;
   writePromptOnly?: boolean;
@@ -359,6 +412,38 @@ type FollowUpCommandDeps = {
   runWorkflow?: (config: RunConfig, apiKey: string) => Promise<RunResult>;
   apiKey?: string;
 };
+
+type ResumeCommandOptions = {
+  outputDir: string;
+  reviewReport?: boolean;
+  xiaomiTimeoutMs?: string;
+  writerTimeoutMs?: string;
+  notify?: boolean;
+  verbose?: boolean;
+};
+
+type ResumeCommandDeps = {
+  resumeWorkflow?: (runDir: string, apiKey: string, options: ResumeOptions) => Promise<RunResult>;
+  apiKey?: string;
+};
+
+function normalizeResumeOptions(options: ResumeCommandOptions): ResumeOptions {
+  return {
+    ...(options.notify !== undefined ? { notify: Boolean(options.notify) } : {}),
+    ...(options.verbose !== undefined ? { verbose: Boolean(options.verbose) } : {}),
+    ...(options.xiaomiTimeoutMs !== undefined ? { xiaomiTimeoutMs: parsePositiveInt(options.xiaomiTimeoutMs, "--xiaomi-timeout-ms") } : {}),
+    ...(options.writerTimeoutMs !== undefined ? { writerTimeoutMs: parsePositiveInt(options.writerTimeoutMs, "--writer-timeout-ms") } : {}),
+    ...(options.reviewReport !== undefined ? { reviewReport: options.reviewReport } : {})
+  };
+}
+
+function parsePositiveInt(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive integer.`);
+  }
+  return parsed;
+}
 
 if (isDirectExecution()) {
   await createProgram().parseAsync(process.argv);

@@ -89,6 +89,21 @@ corepack pnpm research-xm follow-up latest `
 
 The child run config records parent/child lineage. Exactly one of `--write-prompt-only` or `--execute` is required.
 
+Follow-up execution is limited to depth 1. If `latest` is already a child run, use the error's `parentRunId` suggestion and rerun against the non-follow-up parent. Prompt-only mode remains available on child runs for manual review.
+
+If a run fails after expensive search/extraction work has completed, resume the late stage instead of rerunning the full pipeline:
+
+```powershell
+corepack pnpm research-xm resume latest `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+`resume` uses the same run directory, reads `state.json`, appends resume events to `events.jsonl`, and currently supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures. It does not resume incomplete OpenCode search/extraction work yet.
+
 Use Context7 MCP for current library/API documentation and examples when changing code against external packages. Context7 is not a replacement for `research-xm`: it answers library documentation questions, while `research-xm` produces sourced research artifacts and follow-up recommendations.
 
 ## Recommended Run Sizes
@@ -150,9 +165,10 @@ Read generated files in this order:
 1. `runs/<runId>/run_summary.md` gives the fastest view of coverage, errors, reviewer quality, retries, and next actions.
 2. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
 3. `runs/<runId>/report.md` contains the full research result.
-4. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, and partial failures.
+4. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
+5. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, and partial failures.
 
-Report reviews use `readinessScore` instead of future `qualityScore` values: `-2` harmful, `-1` weak, `0` mixed, `1` useful, `2` strong. Old `qualityScore` artifacts remain readable. If reviewer parsing fails, inspect `report_review_raw.txt`; the fallback score is `-1 / weak`.
+Report reviews use `readinessScore` instead of future `qualityScore` values: `-2` harmful, `-1` weak, `0` mixed, `1` useful, `2` strong. Invalid values are normalized conservatively to `-1 / weak` and preserve `invalidReadinessScore`. Old `qualityScore` artifacts remain readable. If reviewer parsing fails, inspect `report_review_raw.txt`; the fallback score is `-1 / weak`.
 
 ## Prompt Locations
 

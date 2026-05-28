@@ -12,6 +12,7 @@ research-xm validate <run>
 research-xm summary <run>
 research-xm follow-up <run> --write-prompt-only
 research-xm follow-up <run> --execute
+research-xm resume <run>
 research-xm smoke
 ```
 
@@ -22,6 +23,7 @@ research-xm smoke
 - `summary <run>` prints or generates `run_summary.md`.
 - `follow-up <run> --write-prompt-only` writes `follow_up_prompt.md` for a targeted next research run without executing it.
 - `follow-up <run> --execute` writes `follow_up_prompt.md` and starts a new child run with lineage metadata.
+- `resume <run>` continues a failed writer, report reviewer, citation lint, or summary stage from existing artifacts in the same run directory.
 - `smoke` tests Xiaomi chat, or Xiaomi native Web Search with `--web`.
 
 `<run>` may be `latest` or an explicit run ID.
@@ -90,7 +92,9 @@ research-xm smoke
 - `1`: useful with caveats
 - `2`: strong / ready for intended use
 
-Old `qualityScore` artifacts still display in summaries for backward compatibility. If reviewer JSON parsing fails, `report_review_raw.txt` is saved and the fallback review uses `readinessScore: -1 / weak`.
+Old `qualityScore` artifacts still display in summaries for backward compatibility. Invalid `readinessScore` values are not clamped; they normalize conservatively to `-1 / weak`, preserve `invalidReadinessScore`, and add a validation warning. If `scoreLabel` conflicts with `readinessScore`, the numeric score wins.
+
+If reviewer JSON parsing fails, `report_review_raw.txt` is saved, `Report review parsing: fallback` appears in summaries, and the fallback review uses `readinessScore: -1 / weak`.
 
 `--no-review-report` skips report QA artifacts for faster debugging.
 
@@ -244,6 +248,28 @@ corepack pnpm research-xm follow-up latest `
 ```
 
 This creates a child run under `runs/<child-run-id>/`. The child `config.json` contains `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`. Exactly one of `--write-prompt-only` or `--execute` is required.
+
+Execution is limited to depth 1. If `latest` resolves to a child follow-up run, the error explains the current depth and suggests `research-xm follow-up <parentRunId> --execute` when `parentRunId` is available. Prompt-only mode is still allowed on child runs.
+
+### Resume failed run
+
+```powershell
+corepack pnpm research-xm resume latest `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Supported resume stages:
+
+- `writer`: requires `plan.json`, `sources.json`, `evidence.json`, and `critique.json`.
+- `reportReviewer`: requires those artifacts plus `report.md`.
+- `citationLint`: requires `report.md` and `sources.json`.
+- `summary`: regenerates `run_summary.md` from available artifacts.
+
+Resume writes/updates `state.json`, appends resume events to `events.jsonl`, and does not rerun planner/search/researcher/critic for supported late-stage failures. It does not resume incomplete OpenCode search/extraction work yet.
 
 ## Prompt locations
 

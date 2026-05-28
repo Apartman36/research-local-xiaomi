@@ -160,6 +160,21 @@ corepack pnpm research-xm follow-up latest `
 
 Follow-up execution creates a new run with lineage metadata in the child `config.json`, including `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`. The parent run is not modified except for `follow_up_prompt.md`.
 
+Execution is limited to depth 1. If `latest` is already a child follow-up run, use the child `parentRunId` in the suggested command. Prompt-only generation remains allowed on child runs for manual inspection.
+
+Resume a failed writer/reviewer/citation/summary stage without rerunning completed search and extraction work:
+
+```powershell
+corepack pnpm research-xm resume latest `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Resume uses the same run directory and `state.json`. It can resume from `writer`, `reportReviewer`, `citationLint`, and `summary` when required artifacts exist. It does not resume incomplete OpenCode search/extraction work yet and does not restart expensive stages unless a future explicit restart option is added.
+
 The default search provider is `opencode-web`:
 
 ```powershell
@@ -307,6 +322,7 @@ pnpm research-xm summary latest
 pnpm research-xm summary latest --path
 pnpm research-xm follow-up latest --write-prompt-only
 pnpm research-xm follow-up latest --execute --profile normal100 --max-tasks 5 --writer-timeout-ms 300000
+pnpm research-xm resume latest --writer-timeout-ms 300000 --notify --verbose
 pnpm research-xm smoke
 pnpm research-xm smoke --web
 ```
@@ -325,6 +341,8 @@ Each run is written under `./runs/<run-id>/`:
 - `sources.json`
 - `evidence.json`
 - `critique.json`
+- `state.json`
+- `citation_lint.json`
 - `report_review.json`
 - `report_review.md`
 - `usage.json`
@@ -388,7 +406,9 @@ The CLI summary prints whether review artifacts exist, `readyForUse`, and the re
 - `1` useful with caveats
 - `2` strong / ready for intended use
 
-Older runs with `qualityScore` still display their legacy score. If reviewer JSON parsing fails, the CLI writes a fallback review with `readinessScore: -1`, surfaces `parsing: fallback`, and saves raw output to `report_review_raw.txt`. Disable review with `--no-review-report` when debugging.
+Older runs with `qualityScore` still display their legacy score. New reviewer output is parsed conservatively: invalid out-of-range values such as `7` are not clamped to `2`; they become `readinessScore: -1 / weak` with `invalidReadinessScore` and a validation warning. If `scoreLabel` conflicts with `readinessScore`, the numeric score wins and the label is normalized.
+
+If reviewer JSON parsing fails, the CLI writes a fallback review with `readinessScore: -1`, surfaces `Report review parsing: fallback`, and saves raw output to `report_review_raw.txt`. Disable review with `--no-review-report` when debugging.
 
 ## Project And Self-Audit Docs
 
@@ -447,7 +467,9 @@ The tool keeps normalized artifacts that are useful for debugging without archiv
 - Citation repair is best effort; lint warnings are not hidden.
 - The report reviewer is QA only; it does not revise `report.md`.
 - `research-xm follow-up <run> --write-prompt-only` only writes a prompt artifact; it does not execute a new run.
-- `research-xm follow-up <run> --execute` runs one child follow-up only; multi-depth recursion is intentionally not implemented.
+- `research-xm follow-up <run> --execute` runs one child follow-up only; multi-depth recursion is intentionally not implemented. If `latest` is already a child, run the suggested parent command using `parentRunId`.
+- `research-xm resume <run>` resumes only writer, report reviewer, citation lint, and summary failures when saved artifacts are present.
+- Resume does not recover incomplete search/extraction stages yet.
 - Knowledge files are human/agent-maintained seeds; there is no automated knowledge append stage yet.
 - The Codex research workflow is controlled and decision-point based; it does not implement autonomous self-modification.
 - `research-xm` never edits source code or creates commits.

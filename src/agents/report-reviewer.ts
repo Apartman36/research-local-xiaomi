@@ -8,7 +8,7 @@ import { getAssistantContent } from "./json.js";
 const reportReviewSchema = z.object({
   overallAssessment: z.string(),
   readyForUse: z.boolean(),
-  readinessScore: z.coerce.number().int().transform((value) => clampReadinessScore(value)),
+  readinessScore: z.unknown().optional(),
   scoreLabel: z.enum(["harmful", "weak", "mixed", "useful", "strong"]).optional(),
   topGaps: z.array(z.string()).default([]),
   topRecommendations: z.array(z.string()).default([]),
@@ -103,11 +103,14 @@ export function fallbackReportReview(reason: string): ReportReview {
 export function parseReportReviewContent(content: string): ReportReviewerResult {
   try {
     const parsed = reportReviewSchema.parse(extractReportReviewJson(content));
-    const scoreLabel = parsed.scoreLabel ?? scoreLabelFor(parsed.readinessScore);
+    const normalized = normalizeReadinessScore(parsed.readinessScore, parsed.scoreLabel);
     return {
       review: {
         ...parsed,
-        scoreLabel,
+        readinessScore: normalized.readinessScore,
+        scoreLabel: normalized.scoreLabel,
+        ...(normalized.validationWarning ? { validationWarning: normalized.validationWarning } : {}),
+        ...(normalized.invalidReadinessScore !== undefined ? { invalidReadinessScore: normalized.invalidReadinessScore } : {}),
         topGaps: parsed.topGaps.length > 0 ? parsed.topGaps : parsed.gaps.map((gap) => gap.gap),
         topRecommendations: parsed.topRecommendations.length > 0 ? parsed.topRecommendations : parsed.recommendations,
         sourceQualityNotes: parsed.sourceQualityNotes.length > 0 ? parsed.sourceQualityNotes : [parsed.sourceQuality.notes],
@@ -223,9 +226,11 @@ Overall assessment: ${review.overallAssessment}
 
 Readiness score: ${formatReadiness(review)}
 
+${review.validationWarning ? `Validation warning: ${review.validationWarning}\n` : ""}
+
 Ready for use: ${review.readyForUse ? "yes" : "no"}
 
-${review.parseFallback ? `Parsing fallback: yes${review.rawOutputPath ? `\n\nRaw reviewer output: ${review.rawOutputPath}` : ""}\n` : ""}
+${review.parseFallback ? `Report review parsing: fallback${review.rawOutputPath ? `\n\nReport review raw output: ${review.rawOutputPath}` : ""}\n` : ""}
 
 ## Citation Assessment
 
@@ -317,14 +322,53 @@ function firstBalancedJsonObject(text: string): string | undefined {
   return undefined;
 }
 
-function clampReadinessScore(value: number): ReadinessScore {
-  if (value <= -2) {
-    return -2;
+function normalizeReadinessScore(
+  rawScore: unknown,
+  rawLabel: ScoreLabel | undefined
+): {
+  readinessScore: ReadinessScore;
+  scoreLabel: ScoreLabel;
+  validationWarning?: string;
+  invalidReadinessScore?: unknown;
+} {
+  const warnings: string[] = [];
+  const parsed = numericScore(rawScore);
+  let readinessScore: ReadinessScore;
+  let invalidReadinessScore: unknown;
+  if (rawScore === undefined) {
+    readinessScore = -1;
+    warnings.push("missing readinessScore; normalized conservatively");
+  } else if (parsed === undefined || !isReadinessScore(parsed)) {
+    readinessScore = -1;
+    invalidReadinessScore = rawScore;
+    warnings.push("invalid readinessScore; normalized conservatively");
+  } else {
+    readinessScore = parsed;
   }
-  if (value >= 2) {
-    return 2;
+  const scoreLabel = scoreLabelFor(readinessScore);
+  if (rawLabel !== undefined && rawLabel !== scoreLabel) {
+    warnings.push(`scoreLabel '${rawLabel}' conflicts with readinessScore; normalized to '${scoreLabel}'`);
   }
-  return value as ReadinessScore;
+  return {
+    readinessScore,
+    scoreLabel,
+    ...(warnings.length > 0 ? { validationWarning: warnings.join("; ") } : {}),
+    ...(invalidReadinessScore !== undefined ? { invalidReadinessScore } : {})
+  };
+}
+
+function numericScore(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function isReadinessScore(value: number): value is ReadinessScore {
+  return value === -2 || value === -1 || value === 0 || value === 1 || value === 2;
 }
 
 function scoreLabelFor(score: ReadinessScore): ScoreLabel {

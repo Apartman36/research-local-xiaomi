@@ -106,7 +106,7 @@ Read in this order:
 5. sources.json / evidence.json only if deeper diagnosis is needed
 6. events.jsonl / usage.json only if debugging
 
-Reviewer readiness uses `readinessScore`: -2 harmful, -1 weak, 0 mixed, 1 useful, 2 strong. If parsing falls back, inspect `report_review_raw.txt`.
+Reviewer readiness uses `readinessScore`: -2 harmful, -1 weak, 0 mixed, 1 useful, 2 strong. Invalid values are normalized conservatively to -1 / weak and preserve diagnostics. If parsing falls back, inspect `report_review_raw.txt`.
 
 ## Follow-up commands
 
@@ -140,7 +140,22 @@ corepack pnpm research-xm follow-up latest `
 [console]::beep(880,700)
 ```
 
-Exactly one of `--write-prompt-only` or `--execute` is required. Child `config.json` records `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`.
+Exactly one of `--write-prompt-only` or `--execute` is required. Child `config.json` records `parentRunId`, `isFollowUpRun`, `followUpDepth`, `followUpReason`, `gapsAddressed`, and `followUpPromptPath`. Execution is limited to depth 1; if `latest` is already a child, use the suggested command with `parentRunId`. Prompt-only mode is allowed on child runs.
+
+## Resume commands
+
+Resume late-stage failures without rerunning completed search/extraction work:
+
+```powershell
+corepack pnpm research-xm resume latest `
+  --writer-timeout-ms 300000 `
+  --notify `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Resume reads `state.json`, operates in the same run directory, appends resume events to `events.jsonl`, and supports `writer`, `reportReviewer`, `citationLint`, and `summary` failures when required artifacts exist. It does not resume incomplete OpenCode search/extraction work yet.
 
 ## How to use findings
 

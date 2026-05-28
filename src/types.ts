@@ -6,6 +6,16 @@ export type SearchProviderName = "opencode-web" | "xiaomi-native";
 export type ResearcherMode = "extract" | "mechanical";
 export type ReadinessScore = -2 | -1 | 0 | 1 | 2;
 export type ScoreLabel = "harmful" | "weak" | "mixed" | "useful" | "strong";
+export type RunStage =
+  | "planner"
+  | "search"
+  | "researcher"
+  | "critic"
+  | "writer"
+  | "reportReviewer"
+  | "citationLint"
+  | "summary"
+  | "completed";
 
 export type ResearchProfile = {
   name: ResearchProfileName;
@@ -172,6 +182,8 @@ export type ReportReview = {
   readinessScore?: ReadinessScore;
   scoreLabel?: ScoreLabel;
   qualityScore?: number;
+  validationWarning?: string;
+  invalidReadinessScore?: unknown;
   topGaps?: string[];
   topRecommendations?: string[];
   sourceQualityNotes?: string[];
@@ -286,4 +298,19 @@ export type CitationLintResult = {
   citedNumbers: number[];
   unknownNumbers: number[];
   sourcesUsed: number;
+};
+
+export type RunStateStatus = "running" | "completed" | "failed" | "partial";
+
+export type RunStateFile = {
+  schemaVersion: 1;
+  runId: string;
+  status: RunStateStatus;
+  currentStage: RunStage;
+  completedStages: RunStage[];
+  failedStage: RunStage | null;
+  lastError: string | null;
+  updatedAt: string;
+  canResume: boolean;
+  artifacts: Record<string, string>;
 };
