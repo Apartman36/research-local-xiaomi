@@ -19,6 +19,9 @@ describe("run summary", () => {
     expect(markdown).toContain("- Run ID:");
     expect(markdown).toContain("- Report: ./report.md");
     expect(markdown).toContain("- Normalized request: ./normalized_request.md");
+    expect(markdown).toContain("- Planner diagnostics: ./planner_diagnostics.json");
+    expect(markdown).toContain("- Planner parse status: repaired");
+    expect(markdown).toContain("- Planner fallback: no");
     expect(markdown).toContain("- Citation lint: ok");
     expect(markdown).toContain("- Report review readyForUse: false");
     expect(markdown).toContain("- Report review readinessScore: -1 / weak");
@@ -130,6 +133,17 @@ describe("run summary", () => {
     expect(markdown).toContain("- Usage: ./usage.json");
   });
 
+  it("summarizes old runs without planner diagnostics", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { plannerDiagnostics: false });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Planner diagnostics: missing");
+    expect(markdown).toContain("- Planner parse status: unavailable");
+  });
+
   it("returns the expected summary path", async () => {
     const runDir = await fixtureRunDir();
     expect(getRunSummaryPath(runDir)).toBe(path.join(runDir, "run_summary.md"));
@@ -180,6 +194,7 @@ async function writeCompleteArtifacts(
     validationWarning?: string;
     tokenAccounting?: boolean;
     normalizedRequest?: boolean;
+    plannerDiagnostics?: boolean;
   } = {}
 ): Promise<void> {
   const config = {
@@ -285,6 +300,13 @@ async function writeCompleteArtifacts(
   await writeFile(path.join(runDir, "report.md"), "# Report\n\nClaim [1].\n", "utf8");
   if (options.normalizedRequest !== false) {
     await writeFile(path.join(runDir, "normalized_request.md"), "# Normalized Research Request\n", "utf8");
+  }
+  if (options.plannerDiagnostics !== false) {
+    await writeFile(
+      path.join(runDir, "planner_diagnostics.json"),
+      JSON.stringify({ schemaVersion: 1, parseStatus: "repaired", fallbackUsed: false, warnings: [] }),
+      "utf8"
+    );
   }
   await writeFile(path.join(runDir, "events.jsonl"), "{\"type\":\"citation_lint_completed\",\"ok\":true,\"sourcesUsed\":1}\n", "utf8");
   if (options.reportReview !== false) {

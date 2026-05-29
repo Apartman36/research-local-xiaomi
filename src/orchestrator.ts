@@ -23,7 +23,7 @@ import { generateRunSummary, getRunSummaryPath } from "./store/run-summary.js";
 import { readRunState, RunStateTracker } from "./store/run-state.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
-import type { CitationLintResult, Critique, EvidenceClaim, EvidenceFile, Finding, NormalizedResearchRequest, Plan, ReportReview, RunConfig, RunStage, SearchTask, Source, UsageSummary } from "./types.js";
+import type { CitationLintResult, Critique, EvidenceClaim, EvidenceFile, Finding, NormalizedResearchRequest, Plan, PlannerDiagnostics, PlannerParseStatus, ReportReview, RunConfig, RunStage, SearchTask, Source, UsageSummary } from "./types.js";
 
 export type RunResult = {
   runId: string;
@@ -70,7 +70,8 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
         maxCompletionTokens: config.maxOutputTokens.promptNormalizer,
         timeoutMs: config.xiaomiTimeoutMs,
         prompt: config.prompt,
-        dryRun: config.dryRun
+        dryRun: config.dryRun,
+        mode: config.promptNormalizerMode
       });
       if (normalizerResult.usedModel || normalizerResult.usage) {
         usage.addCall("promptNormalizer", normalizerResult.usage);
@@ -78,6 +79,9 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
       normalizedRequest = normalizerResult.normalized;
       await writeJsonArtifact(config.runDir, "normalized_request.json", normalizedRequest);
       await writeTextArtifact(config.runDir, "normalized_request.md", renderNormalizedRequestMarkdown(normalizedRequest));
+      if (normalizerResult.rawContent && normalizerResult.normalized.normalizationWarnings.length > 0) {
+        await writeTextArtifact(config.runDir, "normalized_request_raw.txt", normalizerResult.rawContent);
+      }
       const request = normalizedRequest;
       await validatePromptPreflight(events, request, () => validateNormalizedRequest(request));
       await events.log("prompt_normalizer_completed", promptPreflightMetadata(normalizedRequest));
@@ -100,13 +104,35 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     usage.addCall("planner", plannerResult.usage);
     if (plannerResult.parseFailed) {
       await events.log("planner_parse_failed", { error: plannerResult.parseError ?? "Planner response could not be parsed." });
-      await events.log("planner_fallback_used");
+      await events.log("planner_fallback_generated");
+    }
+    if (plannerResult.parseStatus === "repaired") {
+      await events.log("planner_repaired");
+    }
+    if (plannerResult.rawContent && plannerResult.fallbackUsed) {
+      await writeTextArtifact(config.runDir, "planner_raw.txt", plannerResult.rawContent);
+    }
+    const plannerDiagnostics =
+      plannerResult.diagnostics ??
+      buildPlannerDiagnosticsLocal(plannerResult.parseStatus ?? "parsed", Boolean(plannerResult.fallbackUsed), undefined, normalizedRequest);
+    await writeJsonArtifact(config.runDir, "planner_diagnostics.json", plannerDiagnostics);
+    if (plannerResult.fallbackUsed && !plannerResult.rawContent && plannerDiagnostics.rawOutputPath) {
+      plannerDiagnostics.rawOutputPath = undefined;
     }
     for (const coercion of plannerResult.coercions ?? []) {
       await events.log("planner_focus_coerced", coercion);
     }
     if (normalizedRequest) {
-      await validatePromptPreflight(events, normalizedRequest, () => validatePlanPreflight(plannerResult.plan));
+      try {
+        validatePlanQualityLocal(plannerResult.plan, normalizedRequest);
+        validatePlanPreflight(plannerResult.plan);
+      } catch (error) {
+        await events.log("planner_quality_failed", {
+          ...promptPreflightMetadata(normalizedRequest),
+          error: safeError(error)
+        });
+        throw error;
+      }
     }
     const plannedTaskCount = plannerResult.plan.searchTasks.length;
     if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
@@ -480,6 +506,7 @@ async function loadResumableConfig(runDir: string, options: ResumeOptions): Prom
     },
     quotaMode: persisted.quotaMode ?? "normal",
     promptNormalize: persisted.promptNormalize ?? true,
+    promptNormalizerMode: persisted.promptNormalizerMode ?? "auto",
     notify: options.notify ?? persisted.notify,
     verbose: options.verbose ?? persisted.verbose,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs ?? persisted.xiaomiTimeoutMs,
@@ -718,6 +745,90 @@ function promptPreflightMetadata(request: NormalizedResearchRequest): Record<str
     mustCoverCount: request.mustCover.length,
     warningCount: request.warnings.length
   };
+}
+
+function buildPlannerDiagnosticsLocal(
+  parseStatus: PlannerParseStatus,
+  fallbackUsed: boolean,
+  fallbackReason: string | undefined,
+  normalizedRequest: NormalizedResearchRequest | undefined,
+  warnings: string[] = []
+): PlannerDiagnostics {
+  return {
+    schemaVersion: 1,
+    parseStatus,
+    rawOutputPath: fallbackUsed ? "./planner_raw.txt" : undefined,
+    warnings,
+    fallbackUsed,
+    fallbackReason,
+    normalizedRequestSummary: {
+      topic: normalizedRequest?.researchTopic ?? "",
+      questionsToAnswerCount: normalizedRequest?.questionsToAnswer.length ?? 0,
+      mustCoverCount: normalizedRequest?.mustCover.length ?? 0,
+      constraintsCount: normalizedRequest?.constraints.length ?? 0
+    }
+  };
+}
+
+function validatePlanQualityLocal(plan: Plan, normalizedRequest: NormalizedResearchRequest): void {
+  const values = [plan.topic, ...plan.subquestions.map((item) => item.question), ...plan.searchTasks.map((item) => item.query)];
+  const failures: string[] = [];
+  if (/^\s*(role|context|goal):?\s*$/i.test(plan.topic)) {
+    failures.push("topic is generic or a prompt-section label");
+  }
+  if (values.some((value) => /research angle|Role::|Context::|Dry-run fallback subquestion/i.test(value))) {
+    failures.push("plan contains placeholder planner text");
+  }
+  if (duplicateRatio(plan.subquestions.map((item) => item.question)) > 0.3 || duplicateRatio(plan.searchTasks.map((item) => item.query)) > 0.3) {
+    failures.push("plan contains near-duplicate subquestions or search tasks");
+  }
+  const genericCount = plan.subquestions.filter((item) =>
+    /what concrete decisions are required|what evidence is needed about|constraints, risks, and tradeoffs|implementation roadmap follows/i.test(item.question)
+  ).length;
+  if (genericCount > Math.max(2, Math.floor(plan.subquestions.length * 0.4))) {
+    failures.push("subquestions are repeated generic templates");
+  }
+  if (normalizedRequest.questionsToAnswer.length > 0 && plan.subquestions.length > 1) {
+    const covered = normalizedRequest.questionsToAnswer.filter((question) =>
+      plan.subquestions.some((subquestion) => tokenOverlap(question.question, subquestion.question) >= 0.3)
+    ).length;
+    if (covered === 0) {
+      failures.push("plan ignores questionsToAnswer");
+    }
+  }
+  if (normalizedRequest.mustCover.length > 0 && plan.subquestions.length > 1) {
+    const planText = values.join(" ").toLowerCase();
+    const covered = normalizedRequest.mustCover.filter((item) => planText.includes(item.toLowerCase())).length;
+    if (covered === 0) {
+      failures.push("plan ignores mustCover");
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`planner_quality_failed: ${failures.join("; ")}`);
+  }
+}
+
+function duplicateRatio(items: string[]): number {
+  if (items.length <= 1) {
+    return 0;
+  }
+  const normalized = items.map(normalizeForDedupe).filter(Boolean);
+  const unique = new Set(normalized);
+  return (normalized.length - unique.size) / normalized.length;
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aTokens = new Set(normalizeForDedupe(a).split(" ").filter((token) => token.length > 3));
+  const bTokens = new Set(normalizeForDedupe(b).split(" ").filter((token) => token.length > 3));
+  if (aTokens.size === 0 || bTokens.size === 0) {
+    return 0;
+  }
+  const intersection = [...aTokens].filter((token) => bTokens.has(token)).length;
+  return intersection / Math.min(aTokens.size, bTokens.size);
+}
+
+function normalizeForDedupe(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {

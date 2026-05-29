@@ -68,9 +68,13 @@ research-xm smoke
 
 ## Prompt normalization
 
-`run` enables prompt preflight normalization by default. The stage reads the full `input.md`, extracts a concrete topic/objective, writes `normalized_request.json` and `normalized_request.md`, and passes the normalized request to the planner.
+`run` enables prompt preflight normalization by default. The stage reads the full `input.md`, extracts a concrete topic/objective plus structured fields, writes `normalized_request.json` and `normalized_request.md`, and passes the normalized request to the planner.
 
-This prevents role/context prompt templates from being planned as generic topics such as `Role:` or `Context:`. If the prompt cannot be normalized, the run fails before OpenCode search and records `prompt_preflight_failed`.
+Structured extraction includes detected sections, `questionsToAnswer`, `expectedOutputFormat`, `outputRequirements`, `constraints`, `hardwareContext`, `projectRoadmap`, `candidateDependencies`, `importantNotes`, and negative requirements. This prevents role/context prompt templates from being planned as generic topics such as `Role:` or `Context:`.
+
+Planner parsing writes `planner_diagnostics.json`; malformed unrepaired output is saved as `planner_raw.txt`. If the prompt cannot be normalized, or if the planner/fallback plan is generic, repetitive, or ignores normalized questions/must-cover items, the run fails before OpenCode search and records `prompt_preflight_failed` or `planner_quality_failed`.
+
+For large 2000+ word prompts, always inspect `normalized_request.md` and `plan.json` before trusting a deep run.
 
 Recommended prompt headings:
 
@@ -84,6 +88,8 @@ Recommended prompt headings:
 ```
 
 Use `--no-prompt-normalize` only to preserve old planner behavior for debugging.
+
+Use `--prompt-normalizer-mode auto|deterministic|llm` to control extraction. `auto` is the default. `deterministic` avoids a Xiaomi normalizer call. `llm` forces Xiaomi extraction and falls back to deterministic parsing if needed.
 
 ## Researcher modes
 
@@ -130,6 +136,8 @@ If reviewer JSON parsing fails, `report_review_raw.txt` is saved, `Report review
 `--quota-mode conservative|normal|aggressive` controls warning thresholds for estimated usage. `normal` is the default. `conservative` warns earlier and recommends explicit `--max-tasks`, especially with `deep500`. `aggressive` emits fewer estimate-based warnings and does not fail merely because an estimated total is high.
 
 `--no-prompt-normalize` skips prompt preflight normalization.
+
+`--prompt-normalizer-mode auto|deterministic|llm` controls whether long-prompt normalization is deterministic, model-based, or automatic.
 
 Examples:
 
@@ -217,6 +225,21 @@ corepack pnpm research-xm run `
 
 [console]::beep(880,700)
 ```
+
+### Cheap long-prompt sanity check
+
+```powershell
+corepack pnpm research-xm run `
+  --file .\tests\fixtures\sarych-lm-prompt.md `
+  --profile smoke5 `
+  --dry-run `
+  --max-tasks 1 `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+Inspect `normalized_request.md`, `planner_diagnostics.json`, and `plan.json`. Dry run does not start live OpenCode search.
 
 ### Show/validate/summary latest
 

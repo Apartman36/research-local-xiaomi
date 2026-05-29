@@ -18,6 +18,8 @@
 - Added `tokenAccounting` to `usage.json` so direct Xiaomi tokens, OpenCode subprocess usage, estimates, lower-bound status, quota risk, and warnings are explicit.
 - Added `--quota-mode conservative|normal|aggressive` to `run` and `follow-up --execute`.
 - Added prompt preflight normalization before planning, with `normalized_request.json`, `normalized_request.md`, `prompt_preflight_failed`, and `--no-prompt-normalize` for debugging old planner behavior.
+- Hardened long-prompt planning: structured sections now extract `questionsToAnswer`, `hardwareContext`, `expectedOutputFormat`, dependencies, roadmap, and important notes; planner JSON is repaired when possible; malformed raw planner output and `planner_diagnostics.json` are saved; weak generic fallback plans are rejected before search.
+- Added `--prompt-normalizer-mode auto|deterministic|llm` for debugging and force-LLM extraction on difficult long prompts.
 - Added `docs/V05_NEXT_PATCHES_REMINDER.md` to keep deferred v0.5 work out of P1 unless the user explicitly approves scope.
 - Improved follow-up depth errors so child runs point back to `parentRunId` when execution is blocked.
 - Documented `input/` as ignored scratch and `prompts/` as committed reusable prompt fixtures.

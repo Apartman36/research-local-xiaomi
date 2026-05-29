@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { chat, extractUsage } from "../providers/xiaomi.js";
-import type { Confidence, NormalizedResearchRequest, XiaomiUsage } from "../types.js";
+import type { Confidence, NormalizedResearchRequest, PromptNormalizerMode, XiaomiUsage } from "../types.js";
 import { extractJsonObject, getAssistantContent } from "./json.js";
 
 const normalizedRequestSchema = z.object({
@@ -13,6 +13,16 @@ const normalizedRequestSchema = z.object({
   mustCover: z.array(z.string()).default([]),
   outputRequirements: z.array(z.string()).default([]),
   negativeRequirements: z.array(z.string()).default([]),
+  questionsToAnswer: z
+    .array(z.object({ id: z.string(), question: z.string(), sourceSection: z.string().default("Questions to Answer") }))
+    .default([]),
+  hardwareContext: z.array(z.string()).default([]),
+  projectRoadmap: z.array(z.string()).default([]),
+  candidateDependencies: z.array(z.string()).default([]),
+  importantNotes: z.array(z.string()).default([]),
+  expectedOutputFormat: z.array(z.string()).default([]),
+  normalizationMode: z.enum(["deterministic", "llm", "hybrid"]).default("llm"),
+  normalizationWarnings: z.array(z.string()).default([]),
   detectedPromptSections: z.array(z.string()).default([]),
   confidence: z.enum(["high", "medium", "low"]).default("low"),
   warnings: z.array(z.string()).default([]),
@@ -23,6 +33,7 @@ export type PromptNormalizerResult = {
   normalized: NormalizedResearchRequest;
   usage?: XiaomiUsage;
   usedModel: boolean;
+  rawContent?: string;
 };
 
 type Section = {
@@ -37,11 +48,27 @@ const SECTION_ALIASES: Record<string, string> = {
   objective: "Research Objective",
   "research objective": "Research Objective",
   goal: "Goal",
+  "research task": "Research Task",
   context: "Context",
   role: "Role",
   constraints: "Constraints",
+  requirements: "Constraints",
+  "current project constraints": "Current Project Constraints",
   "must cover": "Must Cover",
+  hardware: "Hardware",
+  "project roadmap": "Project Roadmap",
+  roadmap: "Project Roadmap",
+  "questions to answer": "Questions to Answer",
+  questions: "Questions to Answer",
+  "candidate dependencies": "Candidate Dependencies",
+  dependencies: "Candidate Dependencies",
+  important: "Important",
+  output: "Output Requirements",
+  "expected output": "Expected Output Format",
+  "expected output format": "Expected Output Format",
+  deliverables: "Expected Output Format",
   "output requirements": "Output Requirements",
+  "do not": "Negative Requirements",
   "negative requirements": "Negative Requirements",
   "original prompt": "Original Prompt"
 };
@@ -82,18 +109,23 @@ export async function runPromptNormalizer(params: {
   maxCompletionTokens: number;
   prompt: string;
   dryRun: boolean;
+  mode?: PromptNormalizerMode;
   timeoutMs?: number;
 }): Promise<PromptNormalizerResult> {
   const deterministic = normalizePromptDeterministic(params.prompt);
-  if (deterministic.confidence !== "low" || params.dryRun) {
+  const mode = params.mode ?? "auto";
+  if (mode === "deterministic" || params.dryRun || (mode === "auto" && !shouldUseModelNormalizer(params.prompt, deterministic))) {
     return { normalized: deterministic, usedModel: false };
   }
 
   const system = [
     "You normalize long research prompts before planning.",
-    "Extract the user's actual research topic and objective.",
-    "Do not use prompt template labels such as Role, Context, or Goal as the topic.",
-    "Return only JSON matching the requested schema."
+    "Do not answer the research question and do not perform research.",
+    "Only extract the user's research request into strict JSON.",
+    "Preserve all key constraints, questions, hardware context, candidate dependencies, important notes, and output requirements.",
+    "Do not use prompt template labels such as Role, Context, Goal, or section labels as the topic.",
+    "If topic/objective is implied, infer it from project/context/goals.",
+    "Return JSON only, with no Markdown or prose."
   ].join("\n");
   const response = await chat({
     apiKey: params.apiKey,
@@ -116,6 +148,14 @@ export async function runPromptNormalizer(params: {
               mustCover: ["string"],
               outputRequirements: ["string"],
               negativeRequirements: ["string"],
+              questionsToAnswer: [{ id: "Q001", question: "string", sourceSection: "Questions to Answer" }],
+              hardwareContext: ["string"],
+              projectRoadmap: ["string"],
+              candidateDependencies: ["string"],
+              importantNotes: ["string"],
+              expectedOutputFormat: ["string"],
+              normalizationMode: "llm",
+              normalizationWarnings: ["string"],
               detectedPromptSections: ["Role", "Context", "Goal", "Output Requirements"],
               confidence: "high | medium | low",
               warnings: ["string"],
@@ -130,24 +170,32 @@ export async function runPromptNormalizer(params: {
       }
     ]
   });
+  const rawContent = getAssistantContent(response);
 
   try {
-    const parsed = normalizedRequestSchema.parse(extractJsonObject(getAssistantContent(response)));
-    const normalized = normalizeRequestShape({
+    const parsed = normalizedRequestSchema.parse(extractJsonObject(rawContent));
+    const normalized = mergeNormalizedRequests(deterministic, {
       ...parsed,
+      normalizationMode: mode === "auto" ? "hybrid" : "llm",
       rawInputSha256: rawInputSha256(params.prompt),
       detectedPromptSections: mergeUnique(parsed.detectedPromptSections, deterministic.detectedPromptSections)
     });
-    return { normalized, usage: extractUsage(response), usedModel: true };
+    return { normalized, usage: extractUsage(response), usedModel: true, rawContent };
   } catch (error) {
     return {
       normalized: {
         ...deterministic,
+        normalizationMode: "deterministic",
+        normalizationWarnings: [
+          ...deterministic.normalizationWarnings,
+          `Model normalizer returned malformed JSON: ${safeError(error)}`
+        ],
         warnings: [...deterministic.warnings, `Model normalizer returned malformed JSON: ${safeError(error)}`],
         confidence: deterministic.confidence
       },
       usage: extractUsage(response),
-      usedModel: true
+      usedModel: true,
+      rawContent
     };
   }
 }
@@ -165,11 +213,24 @@ export function normalizePromptDeterministic(prompt: string): NormalizedResearch
     firstParagraph(sectionMap.get("Research Topic")) ??
     firstParagraph(sectionMap.get("Title")) ??
     firstParagraph(sectionMap.get("Topic"));
-  const goal = firstParagraph(sectionMap.get("Research Objective")) ?? firstParagraph(sectionMap.get("Goal")) ?? firstParagraph(sectionMap.get("Objective"));
+  const goal =
+    firstParagraph(sectionMap.get("Research Objective")) ??
+    firstParagraph(sectionMap.get("Research Task")) ??
+    firstParagraph(sectionMap.get("Goal")) ??
+    firstParagraph(sectionMap.get("Objective"));
   const context = sectionMap.get("Context")?.trim() ?? "";
+  const hardwareContext = extractList(sectionMap.get("Hardware"));
+  const projectRoadmap = extractList(sectionMap.get("Project Roadmap"));
+  const candidateDependencies = extractList(sectionMap.get("Candidate Dependencies"));
+  const importantNotes = extractList(sectionMap.get("Important"));
+  const expectedOutputFormat = extractList(sectionMap.get("Expected Output Format"));
+  const outputRequirements = mergeUnique(extractList(sectionMap.get("Output Requirements")), expectedOutputFormat);
+  const constraints = mergeUnique(extractList(sectionMap.get("Constraints")), extractList(sectionMap.get("Current Project Constraints")), hardwareContext);
+  const questionsToAnswer = extractQuestions(sectionMap.get("Questions to Answer"), "Questions to Answer");
   const projectName = extractProjectName(prompt);
-  const inferredTopic = explicitTopic ?? buildInferredTopic(projectName, goal, context) ?? firstMeaningfulLine(prompt);
-  const researchObjective = goal ?? buildObjectiveFromPrompt(prompt) ?? "";
+  const objectiveSource = goal ?? buildObjectiveFromPrompt(prompt) ?? buildObjectiveFromSections(context, projectRoadmap, questionsToAnswer.map((item) => item.question));
+  const inferredTopic = explicitTopic ?? buildInferredTopic(projectName, objectiveSource, context, prompt) ?? firstMeaningfulLine(prompt);
+  const researchObjective = objectiveSource ?? "";
   const warnings: string[] = [];
 
   if (!explicitTopic && projectName) {
@@ -195,10 +256,18 @@ export function normalizePromptDeterministic(prompt: string): NormalizedResearch
     researchTopic: inferredTopic ?? "",
     researchObjective,
     userContext: context || firstParagraph(prompt) || "",
-    constraints: extractList(sectionMap.get("Constraints")),
-    mustCover: mergeUnique(extractList(sectionMap.get("Must Cover")), inferMustCover(prompt)),
-    outputRequirements: extractList(sectionMap.get("Output Requirements")),
-    negativeRequirements: mergeUnique(extractList(sectionMap.get("Negative Requirements")), extractNegativeRequirements(prompt)),
+    constraints,
+    mustCover: mergeUnique(extractList(sectionMap.get("Must Cover")), inferMustCover(prompt), candidateDependencies),
+    outputRequirements,
+    negativeRequirements: mergeUnique(extractList(sectionMap.get("Negative Requirements")), extractNegativeRequirements(prompt), extractNegativeRequirements(importantNotes.join("\n"))),
+    questionsToAnswer,
+    hardwareContext,
+    projectRoadmap,
+    candidateDependencies,
+    importantNotes,
+    expectedOutputFormat,
+    normalizationMode: "deterministic",
+    normalizationWarnings: [],
     detectedPromptSections: sections.map((section) => section.label),
     confidence,
     warnings,
@@ -266,8 +335,15 @@ export function renderNormalizedRequestMarkdown(request: NormalizedResearchReque
     "",
     renderList("Must Cover", request.mustCover),
     renderList("Constraints", request.constraints),
+    renderQuestionList("Questions To Answer", request.questionsToAnswer),
+    renderList("Hardware Context", request.hardwareContext),
+    renderList("Project Roadmap", request.projectRoadmap),
+    renderList("Candidate Dependencies", request.candidateDependencies),
+    renderList("Important Notes", request.importantNotes),
+    renderList("Expected Output Format", request.expectedOutputFormat),
     renderList("Output Requirements", request.outputRequirements),
     renderList("Negative Requirements", request.negativeRequirements),
+    renderList("Normalization Warnings", request.normalizationWarnings),
     renderList("Warnings", request.warnings)
   ].join("\n");
 }
@@ -328,17 +404,26 @@ function buildObjectiveFromPrompt(prompt: string): string | undefined {
   return cleanText(line);
 }
 
-function buildInferredTopic(projectName: string | undefined, goal: string | undefined, context: string): string | undefined {
+function buildObjectiveFromSections(context: string, roadmap: string[], questions: string[]): string | undefined {
+  const combined = [context, ...roadmap, ...questions].join(" ");
+  if (/train|from scratch|distillation|language model|local/i.test(combined)) {
+    return "Build and train a small English-only language model from scratch on local hardware, then add distillation and possibly larger variants.";
+  }
+  return undefined;
+}
+
+function buildInferredTopic(projectName: string | undefined, goal: string | undefined, context: string, prompt = ""): string | undefined {
   if (!projectName) {
     return undefined;
   }
-  const descriptor = [goal, context]
-    .filter(Boolean)
-    .join(" ")
-    .match(/\b(?:small|local|English-only|language model|training|from scratch|distillation)\b/gi)
-    ?.slice(0, 6)
-    .join(" ");
-  return descriptor ? `${projectName} ${descriptor}` : projectName;
+  const combined = [goal, context, prompt].join(" ");
+  if (/language model/i.test(combined) && /from scratch/i.test(combined) && /distillation/i.test(combined)) {
+    return `${projectName} local small English-only language model from scratch with distillation`;
+  }
+  const descriptor = combined
+    .match(/\b(?:small|local|English-only|language model|training|train|from scratch|distillation)\b/gi);
+  const uniqueDescriptor = mergeUnique(descriptor ?? []).slice(0, 8).join(" ");
+  return uniqueDescriptor ? `${projectName} ${uniqueDescriptor}` : projectName;
 }
 
 function extractProjectName(prompt: string): string | undefined {
@@ -358,12 +443,25 @@ function extractList(input: string | undefined): string[] {
   }
   const lines = input
     .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*[-*]\s+/, "").trim())
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
     .filter(Boolean);
   if (lines.length <= 1) {
     return splitInlineList(input);
   }
   return lines.map(cleanText).filter((item): item is string => Boolean(item));
+}
+
+function extractQuestions(input: string | undefined, sourceSection: string): NormalizedResearchRequest["questionsToAnswer"] {
+  return extractList(input).map((question, index) => ({
+    id: `Q${String(index + 1).padStart(3, "0")}`,
+    question: ensureQuestion(question),
+    sourceSection
+  }));
+}
+
+function ensureQuestion(input: string): string {
+  const trimmed = input.trim();
+  return /[?]$/.test(trimmed) ? trimmed : `${trimmed}?`;
 }
 
 function splitInlineList(input: string): string[] {
@@ -409,6 +507,7 @@ function scoreConfidence(params: {
 }
 
 function normalizeRequestShape(request: NormalizedResearchRequest): NormalizedResearchRequest {
+  const expectedOutputFormat = cleanList(request.expectedOutputFormat ?? []);
   return {
     schemaVersion: 1,
     researchTopic: cleanText(request.researchTopic) ?? "",
@@ -416,13 +515,66 @@ function normalizeRequestShape(request: NormalizedResearchRequest): NormalizedRe
     userContext: cleanText(request.userContext) ?? "",
     constraints: cleanList(request.constraints),
     mustCover: cleanList(request.mustCover),
-    outputRequirements: cleanList(request.outputRequirements),
+    outputRequirements: mergeUnique(cleanList(request.outputRequirements), expectedOutputFormat),
     negativeRequirements: cleanList(request.negativeRequirements),
+    questionsToAnswer: (request.questionsToAnswer ?? [])
+      .map((item, index) => ({
+        id: cleanText(item.id) ?? `Q${String(index + 1).padStart(3, "0")}`,
+        question: cleanText(item.question) ?? "",
+        sourceSection: cleanText(item.sourceSection) ?? "Questions to Answer"
+      }))
+      .filter((item) => item.question)
+      .slice(0, 40),
+    hardwareContext: cleanList(request.hardwareContext ?? []),
+    projectRoadmap: cleanList(request.projectRoadmap ?? []),
+    candidateDependencies: cleanList(request.candidateDependencies ?? []),
+    importantNotes: cleanList(request.importantNotes ?? []),
+    expectedOutputFormat,
+    normalizationMode: request.normalizationMode ?? "deterministic",
+    normalizationWarnings: cleanList(request.normalizationWarnings ?? []),
     detectedPromptSections: cleanList(request.detectedPromptSections),
     confidence: request.confidence,
     warnings: cleanList(request.warnings),
     rawInputSha256: request.rawInputSha256
   };
+}
+
+function mergeNormalizedRequests(deterministic: NormalizedResearchRequest, model: NormalizedResearchRequest): NormalizedResearchRequest {
+  return normalizeRequestShape({
+    ...model,
+    researchTopic: model.researchTopic || deterministic.researchTopic,
+    researchObjective: model.researchObjective || deterministic.researchObjective,
+    userContext: model.userContext || deterministic.userContext,
+    constraints: mergeUnique(model.constraints, deterministic.constraints),
+    mustCover: mergeUnique(model.mustCover, deterministic.mustCover),
+    outputRequirements: mergeUnique(model.outputRequirements, deterministic.outputRequirements),
+    negativeRequirements: mergeUnique(model.negativeRequirements, deterministic.negativeRequirements),
+    questionsToAnswer: model.questionsToAnswer.length > 0 ? model.questionsToAnswer : deterministic.questionsToAnswer,
+    hardwareContext: mergeUnique(model.hardwareContext, deterministic.hardwareContext),
+    projectRoadmap: mergeUnique(model.projectRoadmap, deterministic.projectRoadmap),
+    candidateDependencies: mergeUnique(model.candidateDependencies, deterministic.candidateDependencies),
+    importantNotes: mergeUnique(model.importantNotes, deterministic.importantNotes),
+    expectedOutputFormat: mergeUnique(model.expectedOutputFormat, deterministic.expectedOutputFormat),
+    normalizationWarnings: mergeUnique(model.normalizationWarnings, deterministic.normalizationWarnings),
+    detectedPromptSections: mergeUnique(model.detectedPromptSections, deterministic.detectedPromptSections),
+    warnings: mergeUnique(model.warnings, deterministic.warnings),
+    rawInputSha256: model.rawInputSha256 || deterministic.rawInputSha256
+  });
+}
+
+function shouldUseModelNormalizer(prompt: string, deterministic: NormalizedResearchRequest): boolean {
+  if (deterministic.confidence === "low") {
+    return true;
+  }
+  const wordCount = prompt.trim().split(/\s+/).filter(Boolean).length;
+  const manySections = deterministic.detectedPromptSections.length >= 5;
+  const missingRichFields =
+    deterministic.questionsToAnswer.length === 0 ||
+    deterministic.outputRequirements.length === 0 ||
+    deterministic.expectedOutputFormat.length === 0;
+  const detectedQuestions = deterministic.detectedPromptSections.some((section) => /questions/i.test(section));
+  const detectedOutput = deterministic.detectedPromptSections.some((section) => /output|deliverable/i.test(section));
+  return (wordCount > 1000 || manySections) && missingRichFields && (detectedQuestions || detectedOutput || deterministic.mustCover.length < 3);
 }
 
 function cleanList(values: string[]): string[] {
@@ -454,6 +606,15 @@ function rawInputSha256(prompt: string): string {
 
 function renderList(title: string, items: string[]): string {
   return [`## ${title}`, "", ...(items.length > 0 ? items.map((item) => `- ${item}`) : ["- none"]), ""].join("\n");
+}
+
+function renderQuestionList(title: string, items: NormalizedResearchRequest["questionsToAnswer"]): string {
+  return [
+    `## ${title}`,
+    "",
+    ...(items.length > 0 ? items.map((item) => `- ${item.id}: ${item.question} (${item.sourceSection})`) : ["- none"]),
+    ""
+  ].join("\n");
 }
 
 function escapeRegExp(input: string): string {

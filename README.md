@@ -219,8 +219,10 @@ Before planning, `research-xm run` now normalizes the full prompt into a structu
 
 - `normalized_request.json`
 - `normalized_request.md`
+- `planner_diagnostics.json`
+- `planner_raw.txt` when malformed planner output cannot be repaired
 
-The normalizer preserves `input.md`, extracts the actual topic/objective, and prevents role/context prompt templates from becoming bogus topics such as `Role:`. If a prompt cannot be normalized with enough confidence, the run stops before OpenCode search, writes `prompt_preflight_failed` to `events.jsonl`, and asks for clearer headings.
+The normalizer preserves `input.md`, extracts the actual topic/objective, questions to answer, hardware context, project roadmap, candidate dependencies, expected output format, constraints, important notes, and negative requirements. It prevents role/context prompt templates from becoming bogus topics such as `Role:`. If a prompt cannot be normalized with enough confidence, or if planner output/fallback quality is generic or repetitive, the run stops before OpenCode search and records `prompt_preflight_failed` or `planner_quality_failed` in `events.jsonl`.
 
 Recommended long-prompt format:
 
@@ -238,11 +240,35 @@ Recommended long-prompt format:
 # Original Prompt
 ```
 
+For large 2000+ word prompts, always inspect `normalized_request.md` and `plan.json` before trusting a deep run. Also inspect `planner_diagnostics.json` when planner parsing was repaired or fallback-generated.
+
+Normalizer modes:
+
+- `--prompt-normalizer-mode auto` is the default. It uses deterministic extraction for small/rich prompts and calls Xiaomi only when a long structured prompt still has missing key fields.
+- `--prompt-normalizer-mode deterministic` never calls Xiaomi for normalization.
+- `--prompt-normalizer-mode llm` forces Xiaomi extraction and falls back to deterministic parsing if the model returns malformed JSON.
+
 Use `--no-prompt-normalize` only when debugging old planner behavior:
 
 ```powershell
 pnpm research-xm run --file .\prompts\research-task.md --no-prompt-normalize
 ```
+
+Cheap prompt sanity check:
+
+```powershell
+corepack pnpm research-xm run `
+  --file .\tests\fixtures\sarych-lm-prompt.md `
+  --profile smoke5 `
+  --dry-run `
+  --max-tasks 1 `
+  --output-dir .\runs `
+  --verbose
+
+[console]::beep(880,700)
+```
+
+This writes `normalized_request.json`, `normalized_request.md`, `planner_diagnostics.json`, and `plan.json` without live search.
 
 ## Profiles
 
@@ -356,6 +382,7 @@ pnpm research-xm run --file .\prompts\my-research.md --model mimo-v2.5-pro
 pnpm research-xm run --file .\prompts\my-research.md --focus github
 pnpm research-xm run --file .\prompts\my-research.md --search-provider opencode-web
 pnpm research-xm run --file .\prompts\my-research.md --search-provider xiaomi-native
+pnpm research-xm run --file .\prompts\my-research.md --prompt-normalizer-mode llm
 pnpm research-xm run --file .\prompts\my-research.md --no-prompt-normalize
 pnpm research-xm run --file .\prompts\my-research.md --researcher-mode extract --notify
 pnpm research-xm run --file .\prompts\my-research.md --no-review-report
@@ -381,6 +408,9 @@ Each run is written under `./runs/<run-id>/`:
 - `config.json`
 - `normalized_request.json`
 - `normalized_request.md`
+- `normalized_request_raw.txt` when malformed LLM normalizer output needs inspection
+- `planner_diagnostics.json`
+- `planner_raw.txt` when malformed planner output cannot be repaired
 - `plan.json`
 - `queries.json`
 - `findings/*.json`

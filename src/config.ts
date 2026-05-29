@@ -6,7 +6,7 @@ import { deep500 } from "./profiles/deep500.js";
 import { normal100 } from "./profiles/normal100.js";
 import { smoke5 } from "./profiles/smoke5.js";
 import { DEFAULT_OPENCODE_MODEL } from "./search/search-provider.js";
-import type { QuotaMode, ResearchFocus, ResearchProfile, ResearchProfileName, ResearcherMode, RoleTokenLimits, RunConfig } from "./types.js";
+import type { PromptNormalizerMode, QuotaMode, ResearchFocus, ResearchProfile, ResearchProfileName, ResearcherMode, RoleTokenLimits, RunConfig } from "./types.js";
 
 dotenv.config({ quiet: true });
 
@@ -34,6 +34,7 @@ const runOptionsSchema = z.object({
   maxTasks: z.coerce.number().int().positive().optional(),
   quotaMode: z.enum(["conservative", "normal", "aggressive"]).default("normal"),
   promptNormalize: z.boolean().default(true),
+  promptNormalizerMode: z.enum(["auto", "deterministic", "llm"]).default("auto"),
   opencodeTimeoutMs: z.coerce.number().int().positive().default(180_000),
   opencodeRetries: z.coerce.number().int().min(0).max(5).default(2),
   xiaomiTimeoutMs: z.coerce.number().int().min(1000).max(600_000).default(120_000),
@@ -115,6 +116,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     maxTasks: parsed.maxTasks,
     quotaMode: parsed.quotaMode as QuotaMode,
     promptNormalize: parsed.promptNormalize,
+    promptNormalizerMode: parsed.promptNormalizerMode as PromptNormalizerMode,
     researcherMode: parsed.researcherMode as ResearcherMode,
     reviewReport: parsed.reviewReport,
     notify: parsed.notify,

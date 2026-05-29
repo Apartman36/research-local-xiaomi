@@ -7,6 +7,8 @@ import { writeTextArtifact } from "./run-store.js";
 const ARTIFACTS = [
   "report.md",
   "normalized_request.md",
+  "planner_diagnostics.json",
+  "planner_raw.txt",
   "report_review.md",
   "sources.json",
   "evidence.json",
@@ -32,6 +34,7 @@ type RunSummaryContext = {
   sources?: Source[];
   evidence?: any;
   review?: ReportReview;
+  plannerDiagnostics?: any;
   lint?: CitationLintResult;
   opencodeDiagnostics: OpenCodeDiagnostics;
   existingArtifacts: Set<string>;
@@ -81,12 +84,13 @@ export async function listRunArtifacts(runDir: string): Promise<string[]> {
 }
 
 async function loadRunSummaryContext(runDir: string): Promise<RunSummaryContext> {
-  const [config, usage, sources, evidence, review, report, eventsText, existingFiles] = await Promise.all([
+  const [config, usage, sources, evidence, review, plannerDiagnostics, report, eventsText, existingFiles] = await Promise.all([
     readOptionalJson(path.join(runDir, "config.json")),
     readOptionalJson<UsageSummary>(path.join(runDir, "usage.json")),
     readOptionalJson<Source[]>(path.join(runDir, "sources.json")),
     readOptionalJson(path.join(runDir, "evidence.json")),
     readOptionalJson<ReportReview>(path.join(runDir, "report_review.json")),
+    readOptionalJson(path.join(runDir, "planner_diagnostics.json")),
     readOptionalText(path.join(runDir, "report.md")),
     readOptionalText(path.join(runDir, "events.jsonl")),
     listRunArtifacts(runDir)
@@ -103,6 +107,7 @@ async function loadRunSummaryContext(runDir: string): Promise<RunSummaryContext>
     sources,
     evidence,
     review,
+    plannerDiagnostics,
     lint,
     opencodeDiagnostics: buildOpenCodeDiagnostics(usage, eventsText),
     existingArtifacts,
@@ -144,6 +149,10 @@ function renderRunSummary(context: RunSummaryContext): string {
     "",
     "## Quality",
     "",
+    `- Planner parse status: ${value(context.plannerDiagnostics?.parseStatus)}`,
+    `- Planner fallback: ${context.plannerDiagnostics ? yesNo(Boolean(context.plannerDiagnostics.fallbackUsed)) : "unavailable"}`,
+    `- Planner diagnostics: ${context.existingArtifacts.has("planner_diagnostics.json") ? "./planner_diagnostics.json" : "missing"}`,
+    ...(context.existingArtifacts.has("planner_raw.txt") ? ["- Planner raw output: ./planner_raw.txt"] : []),
     `- Citation lint: ${context.lint ? (context.lint.ok ? "ok" : "failed") : "unavailable"}`,
     `- Cited sources: ${value(context.lint?.sourcesUsed ?? usage?.sourcesUsedInReport)}`,
     `- Unique sources: ${value(uniqueSources)}`,
@@ -287,6 +296,8 @@ function artifactLabel(artifact: string): string {
   const labels: Record<string, string> = {
     "report.md": "Report",
     "normalized_request.md": "Normalized request",
+    "planner_diagnostics.json": "Planner diagnostics",
+    "planner_raw.txt": "Planner raw output",
     "report_review.md": "Report review",
     "sources.json": "Sources",
     "evidence.json": "Evidence",

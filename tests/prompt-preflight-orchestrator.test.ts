@@ -11,9 +11,13 @@ const mocks = vi.hoisted(() => ({
   runReportReviewer: vi.fn()
 }));
 
-vi.mock("../src/agents/planner.js", () => ({
-  runPlanner: mocks.runPlanner
-}));
+vi.mock("../src/agents/planner.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/agents/planner.js")>("../src/agents/planner.js");
+  return {
+    ...actual,
+    runPlanner: mocks.runPlanner
+  };
+});
 
 vi.mock("../src/agents/researcher.js", () => ({
   runResearchTask: mocks.runResearchTask
@@ -78,6 +82,8 @@ describe("prompt preflight orchestration", () => {
     const plannerParams = mocks.runPlanner.mock.calls[0]?.[0];
     expect(plannerParams.normalizedRequest.researchTopic).toContain("SARYCH-LM");
     expect(plannerParams.normalizedRequest.researchObjective).toContain("Build and train");
+    expect(plannerParams.normalizedRequest.questionsToAnswer).toBeDefined();
+    expect(plannerParams.normalizedRequest.expectedOutputFormat).toBeDefined();
     expect(plannerParams.prompt).toContain("Role:");
     const normalized = JSON.parse(await readFile(path.join(config.runDir, "normalized_request.json"), "utf8"));
     const persistedConfig = JSON.parse(await readFile(path.join(config.runDir, "config.json"), "utf8"));
@@ -97,11 +103,45 @@ describe("prompt preflight orchestration", () => {
       }
     });
 
-    await expect(runResearch(config, "test-key")).rejects.toThrow("The research prompt could not be normalized");
+    await expect(runResearch(config, "test-key")).rejects.toThrow("planner_quality_failed");
 
     expect(mocks.runResearchTask).not.toHaveBeenCalled();
     const events = await readFile(path.join(config.runDir, "events.jsonl"), "utf8");
-    expect(events).toContain("prompt_preflight_failed");
+    expect(events).toContain("planner_quality_failed");
+  });
+
+  it("writes planner diagnostics and raw output when planner falls back", async () => {
+    const config = await testConfig("# Research Topic\nSARYCH-LM\n\n# Research Objective\nPlan local PyTorch training.");
+    mocks.runPlanner.mockResolvedValueOnce({
+      plan: validPlan(),
+      parseFailed: true,
+      parseStatus: "fallback",
+      fallbackUsed: true,
+      parseError: "Unexpected token",
+      rawContent: "not json",
+      diagnostics: {
+        schemaVersion: 1,
+        parseStatus: "fallback",
+        rawOutputPath: "./planner_raw.txt",
+        warnings: ["Planner returned malformed JSON."],
+        fallbackUsed: true,
+        fallbackReason: "malformed_json",
+        normalizedRequestSummary: {
+          topic: "SARYCH-LM",
+          questionsToAnswerCount: 0,
+          mustCoverCount: 1,
+          constraintsCount: 0
+        }
+      }
+    });
+
+    await runResearch(config, "test-key");
+
+    expect(await readFile(path.join(config.runDir, "planner_raw.txt"), "utf8")).toBe("not json");
+    const diagnostics = JSON.parse(await readFile(path.join(config.runDir, "planner_diagnostics.json"), "utf8"));
+    expect(diagnostics.parseStatus).toBe("fallback");
+    const events = await readFile(path.join(config.runDir, "events.jsonl"), "utf8");
+    expect(events).toContain("planner_fallback_generated");
   });
 
   it("fails low-confidence prompts before planner or search", async () => {
@@ -158,7 +198,13 @@ Context:
 I am preparing a local machine learning project called SARYCH-LM.
 
 Goal:
-Build and train a small English-only language model from scratch, then later add distillation and possibly larger variants.`;
+Build and train a small English-only language model from scratch, then later add distillation and possibly larger variants.
+
+Questions to answer:
+1. What CUDA stack should be used?
+
+Expected output format:
+- Version recommendation.`;
 }
 
 function validPlan() {
@@ -166,8 +212,8 @@ function validPlan() {
     topic: "SARYCH-LM local language model training",
     objective: "Plan local training.",
     assumptions: [],
-    subquestions: [{ id: "SQ001", question: "What training plan fits SARYCH-LM?" }],
-    searchTasks: [{ id: "T001", subquestionId: "SQ001", query: "SARYCH-LM PyTorch CUDA local LLM training", depth: 1, focus: "web" }]
+    subquestions: [{ id: "SQ001", question: "What CUDA stack should be used for SARYCH-LM local PyTorch training?" }],
+    searchTasks: [{ id: "T001", subquestionId: "SQ001", query: "SARYCH-LM PyTorch CUDA Blackwell WSL2 local LLM training", depth: 1, focus: "web" }]
   };
 }
 

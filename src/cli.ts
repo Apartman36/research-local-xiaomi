@@ -40,6 +40,7 @@ export function createProgram(): Command {
   .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
   .option("--prompt-normalize", "run prompt preflight normalization before planning", true)
   .option("--no-prompt-normalize", "skip prompt preflight normalization")
+  .option("--prompt-normalizer-mode <auto|deterministic|llm>", "prompt normalizer mode", "auto")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
   .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -65,6 +66,7 @@ export function createProgram(): Command {
         maxTasks: options.maxTasks as string | undefined,
         quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
         promptNormalize: options.promptNormalize as boolean | undefined,
+        promptNormalizerMode: options.promptNormalizerMode as "auto" | "deterministic" | "llm" | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         opencodeRetries: options.opencodeRetries as string | undefined,
         xiaomiTimeoutMs: options.xiaomiTimeoutMs as string | undefined,
@@ -203,6 +205,7 @@ export function createProgram(): Command {
     .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
     .option("--prompt-normalize", "run prompt preflight normalization before planning", true)
     .option("--no-prompt-normalize", "skip prompt preflight normalization")
+    .option("--prompt-normalizer-mode <auto|deterministic|llm>", "prompt normalizer mode", "auto")
     .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
     .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
     .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -353,6 +356,7 @@ export async function printFollowUpCommand(
     maxTasks: options.maxTasks,
     quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
     promptNormalize: options.promptNormalize,
+    promptNormalizerMode: options.promptNormalizerMode as "auto" | "deterministic" | "llm" | undefined,
     opencodeTimeoutMs: options.opencodeTimeoutMs,
     opencodeRetries: options.opencodeRetries,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs,
@@ -413,6 +417,7 @@ type FollowUpCommandOptions = {
   maxTasks?: string;
   quotaMode?: string;
   promptNormalize?: boolean;
+  promptNormalizerMode?: string;
   opencodeTimeoutMs?: string;
   opencodeRetries?: string;
   xiaomiTimeoutMs?: string;

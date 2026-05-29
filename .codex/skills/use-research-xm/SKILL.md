@@ -58,7 +58,11 @@ Prefer long research prompts with explicit headings:
 # Original Prompt
 ```
 
-`research-xm run` performs prompt preflight normalization by default and writes `normalized_request.json` plus `normalized_request.md`. This prevents role/context templates from being planned as `Role:` or `Context:`. If `prompt_preflight_failed` appears, inspect `normalized_request.json` and add clearer topic/objective headings. Use `--no-prompt-normalize` only to reproduce old planner behavior.
+`research-xm run` performs prompt preflight normalization by default and writes `normalized_request.json` plus `normalized_request.md`. It extracts questions to answer, expected output format, constraints, hardware context, candidate dependencies, roadmap, and important notes when long Markdown prompts provide them. This prevents role/context templates from being planned as `Role:` or `Context:`.
+
+Planner parsing writes `planner_diagnostics.json`; unrepaired malformed planner output is saved as `planner_raw.txt`. If `prompt_preflight_failed` or `planner_quality_failed` appears, inspect `normalized_request.md`, `planner_diagnostics.json`, `planner_raw.txt` if present, and `plan.json`. Use `--prompt-normalizer-mode llm` for difficult long prompts when deterministic extraction is incomplete. Use `--no-prompt-normalize` only to reproduce old planner behavior.
+
+For large 2000+ word prompts, always inspect `normalized_request.md` and `plan.json` before trusting a deep run.
 
 Do not confuse these:
 
@@ -80,6 +84,7 @@ corepack pnpm research-xm run `
   --opencode-timeout-ms 180000 `
   --opencode-retries 2 `
   --xiaomi-timeout-ms 120000 `
+  --prompt-normalizer-mode auto `
   --writer-timeout-ms 300000 `
   --concurrency 1 `
   --researcher-mode extract `
@@ -117,11 +122,13 @@ Read in this order:
 
 1. run_summary.md
 2. normalized_request.md
-3. report_review.md
-4. report.md
-5. critique.json
-6. sources.json / evidence.json only if deeper diagnosis is needed
-7. events.jsonl / usage.json only if debugging
+3. planner_diagnostics.json
+4. plan.json
+5. report_review.md
+6. report.md
+7. critique.json
+8. sources.json / evidence.json only if deeper diagnosis is needed
+9. events.jsonl / usage.json only if debugging
 
 Reviewer readiness uses `readinessScore`: -2 harmful, -1 weak, 0 mixed, 1 useful, 2 strong. Invalid values are normalized conservatively to -1 / weak and preserve diagnostics. If parsing falls back, inspect `report_review_raw.txt`.
 

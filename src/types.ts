@@ -5,6 +5,8 @@ export type Phase = "promptNormalizer" | "planner" | "researcher" | "critic" | "
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
 export type ResearcherMode = "extract" | "mechanical";
 export type QuotaMode = "conservative" | "normal" | "aggressive";
+export type PromptNormalizerMode = "auto" | "deterministic" | "llm";
+export type NormalizationMode = "deterministic" | "llm" | "hybrid";
 export type ReadinessScore = -2 | -1 | 0 | 1 | 2;
 export type ScoreLabel = "harmful" | "weak" | "mixed" | "useful" | "strong";
 export type RunStage =
@@ -69,6 +71,7 @@ export type RunConfig = {
   maxTasks?: number;
   quotaMode: QuotaMode;
   promptNormalize: boolean;
+  promptNormalizerMode: PromptNormalizerMode;
   researcherMode: ResearcherMode;
   reviewReport: boolean;
   notify: boolean;
@@ -92,6 +95,18 @@ export type NormalizedResearchRequest = {
   mustCover: string[];
   outputRequirements: string[];
   negativeRequirements: string[];
+  questionsToAnswer: Array<{
+    id: string;
+    question: string;
+    sourceSection: string;
+  }>;
+  hardwareContext: string[];
+  projectRoadmap: string[];
+  candidateDependencies: string[];
+  importantNotes: string[];
+  expectedOutputFormat: string[];
+  normalizationMode: NormalizationMode;
+  normalizationWarnings: string[];
   detectedPromptSections: string[];
   confidence: Confidence;
   warnings: string[];
@@ -130,6 +145,23 @@ export type Plan = {
   assumptions: string[];
   subquestions: Subquestion[];
   searchTasks: SearchTask[];
+};
+
+export type PlannerParseStatus = "parsed" | "repaired" | "fallback" | "failed";
+
+export type PlannerDiagnostics = {
+  schemaVersion: 1;
+  parseStatus: PlannerParseStatus;
+  rawOutputPath?: string;
+  warnings: string[];
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  normalizedRequestSummary: {
+    topic: string;
+    questionsToAnswerCount: number;
+    mustCoverCount: number;
+    constraintsCount: number;
+  };
 };
 
 export type NormalizedAnnotation = {

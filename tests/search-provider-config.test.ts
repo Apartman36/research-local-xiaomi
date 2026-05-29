@@ -17,6 +17,25 @@ describe("search provider config", () => {
     expect(config.opencodeRetries).toBe(2);
     expect(config.quotaMode).toBe("normal");
     expect(config.promptNormalize).toBe(true);
+    expect(config.promptNormalizerMode).toBe("auto");
+  });
+
+  it.each(["auto", "deterministic", "llm"] as const)("accepts prompt normalizer mode %s", async (promptNormalizerMode) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const config = await buildRunConfig({ file: promptPath, promptNormalizerMode });
+
+    expect(config.promptNormalizerMode).toBe(promptNormalizerMode);
+  });
+
+  it("rejects invalid prompt normalizer mode", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    await expect(buildRunConfig({ file: promptPath, promptNormalizerMode: "mixed" as never })).rejects.toThrow();
   });
 
   it.each(["normal", "conservative", "aggressive"] as const)("accepts quota mode %s", async (quotaMode) => {

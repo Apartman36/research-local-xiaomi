@@ -122,11 +122,28 @@ Use Context7 MCP for current library/API documentation and examples when changin
 
 ## Prompt Preflight
 
-`research-xm run` normalizes prompts before planning by default. It writes `normalized_request.json` and `normalized_request.md`, then gives the planner the original prompt plus the normalized topic, objective, must-cover list, constraints, and output requirements.
+`research-xm run` normalizes prompts before planning by default. It writes `normalized_request.json` and `normalized_request.md`, then gives the planner the original prompt plus the normalized topic, objective, questions to answer, must-cover list, constraints, hardware context, expected output format, candidate dependencies, and important notes.
 
-This protects long role/context templates from becoming malformed plans where `Role:` or `Context:` is treated as the research topic. If the preflight cannot extract a concrete topic/objective or catches placeholder planner output such as `research angle 1`, the run stops before OpenCode search and records `prompt_preflight_failed`.
+This protects long role/context templates from becoming malformed plans where `Role:` or `Context:` is treated as the research topic. The deterministic parser supports Markdown headings and colon-label sections such as `Questions to answer:`, `Expected output format:`, `Current project constraints:`, `Hardware:`, `Candidate dependencies:`, and `Important:`.
 
-Use `--no-prompt-normalize` only when intentionally reproducing old planner behavior.
+The planner now writes `planner_diagnostics.json`; unrepaired malformed output is saved as `planner_raw.txt`. If the preflight cannot extract a concrete topic/objective, or if planner/fallback output is repetitive, placeholder-heavy, or ignores normalized questions and must-cover items, the run stops before OpenCode search and records `prompt_preflight_failed` or `planner_quality_failed`.
+
+Use `--prompt-normalizer-mode llm` for difficult long prompts when deterministic extraction looks incomplete. Use `--no-prompt-normalize` only when intentionally reproducing old planner behavior.
+
+For large 2000+ word prompts, always inspect `normalized_request.md` and `plan.json` before trusting a deep run.
+
+Cheap sanity check without live search:
+
+```powershell
+corepack pnpm research-xm run `
+  --file .\tests\fixtures\sarych-lm-prompt.md `
+  --profile smoke5 `
+  --dry-run `
+  --max-tasks 1 `
+  --verbose
+
+[console]::beep(880,700)
+```
 
 ## Recommended Run Sizes
 
@@ -186,10 +203,12 @@ Read generated files in this order:
 
 1. `runs/<runId>/run_summary.md` gives the fastest view of coverage, errors, reviewer quality, retries, and next actions.
 2. `runs/<runId>/normalized_request.md` shows what the planner actually received as the topic/objective.
-3. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
-4. `runs/<runId>/report.md` contains the full research result.
-5. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
-6. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, preflight failures, and partial failures.
+3. `runs/<runId>/planner_diagnostics.json` explains whether planner JSON was parsed, repaired, or fallback-generated.
+4. `runs/<runId>/plan.json` shows subquestions and search tasks before trusting a costly run.
+5. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
+6. `runs/<runId>/report.md` contains the full research result.
+7. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
+8. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, preflight failures, planner quality failures, and partial failures.
 
 For new runs, `usage.json` includes `tokenAccounting`. Treat direct Xiaomi tokens as the usage visible to `research-xm`; OpenCode subprocess token usage may be unavailable and estimated. Estimated totals are lower-bound operational guidance, not billing truth, and the Xiaomi dashboard may show more usage than direct `usage.json` totals.
 
