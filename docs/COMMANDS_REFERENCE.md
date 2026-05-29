@@ -66,6 +66,25 @@ research-xm smoke
 - experimental
 - may fail with `webSearchEnabled=false`
 
+## Prompt normalization
+
+`run` enables prompt preflight normalization by default. The stage reads the full `input.md`, extracts a concrete topic/objective, writes `normalized_request.json` and `normalized_request.md`, and passes the normalized request to the planner.
+
+This prevents role/context prompt templates from being planned as generic topics such as `Role:` or `Context:`. If the prompt cannot be normalized, the run fails before OpenCode search and records `prompt_preflight_failed`.
+
+Recommended prompt headings:
+
+```markdown
+# Research Topic
+# Research Objective
+# Must Cover
+# Constraints
+# Output Requirements
+# Original Prompt
+```
+
+Use `--no-prompt-normalize` only to preserve old planner behavior for debugging.
+
 ## Researcher modes
 
 `extract`
@@ -109,6 +128,8 @@ If reviewer JSON parsing fails, `report_review_raw.txt` is saved, `Report review
 `--writer-timeout-ms` overrides the Xiaomi timeout for the writer only.
 
 `--quota-mode conservative|normal|aggressive` controls warning thresholds for estimated usage. `normal` is the default. `conservative` warns earlier and recommends explicit `--max-tasks`, especially with `deep500`. `aggressive` emits fewer estimate-based warnings and does not fail merely because an estimated total is high.
+
+`--no-prompt-normalize` skips prompt preflight normalization.
 
 Examples:
 

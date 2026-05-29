@@ -89,4 +89,16 @@ describe("UsageTracker", () => {
     expect(summary.tokenAccounting?.openCode.estimatedTokens).toBe(6000);
     expect(summary.tokenAccounting?.total.estimatedTotalTokens).toBe(6100);
   });
+
+  it("counts prompt normalizer calls as direct Xiaomi usage", () => {
+    const tracker = new UsageTracker("2026-01-01T00:00:00.000Z", "smoke5", "mimo-v2.5-pro");
+
+    tracker.addCall("promptNormalizer", { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 });
+    const summary = tracker.finish(0, 0);
+
+    expect(summary.promptNormalizerCalls).toBe(1);
+    expect(summary.callsByPhase.promptNormalizer).toBe(1);
+    expect(summary.xiaomi.calls).toBe(1);
+    expect(summary.xiaomi.total_tokens).toBe(10);
+  });
 });

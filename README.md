@@ -215,6 +215,35 @@ Prompt files are the intended workflow for long 2000-3000 word tasks:
 pnpm research-xm run --file .\prompts\research-task.md --profile normal100
 ```
 
+Before planning, `research-xm run` now normalizes the full prompt into a structured research request. This preflight step is enabled by default and writes:
+
+- `normalized_request.json`
+- `normalized_request.md`
+
+The normalizer preserves `input.md`, extracts the actual topic/objective, and prevents role/context prompt templates from becoming bogus topics such as `Role:`. If a prompt cannot be normalized with enough confidence, the run stops before OpenCode search, writes `prompt_preflight_failed` to `events.jsonl`, and asks for clearer headings.
+
+Recommended long-prompt format:
+
+```markdown
+# Research Topic
+
+# Research Objective
+
+# Must Cover
+
+# Constraints
+
+# Output Requirements
+
+# Original Prompt
+```
+
+Use `--no-prompt-normalize` only when debugging old planner behavior:
+
+```powershell
+pnpm research-xm run --file .\prompts\research-task.md --no-prompt-normalize
+```
+
 ## Profiles
 
 `smoke5` is a tiny integration profile:
@@ -327,6 +356,7 @@ pnpm research-xm run --file .\prompts\my-research.md --model mimo-v2.5-pro
 pnpm research-xm run --file .\prompts\my-research.md --focus github
 pnpm research-xm run --file .\prompts\my-research.md --search-provider opencode-web
 pnpm research-xm run --file .\prompts\my-research.md --search-provider xiaomi-native
+pnpm research-xm run --file .\prompts\my-research.md --no-prompt-normalize
 pnpm research-xm run --file .\prompts\my-research.md --researcher-mode extract --notify
 pnpm research-xm run --file .\prompts\my-research.md --no-review-report
 pnpm research-xm list
@@ -349,6 +379,8 @@ Each run is written under `./runs/<run-id>/`:
 
 - `input.md`
 - `config.json`
+- `normalized_request.json`
+- `normalized_request.md`
 - `plan.json`
 - `queries.json`
 - `findings/*.json`
@@ -391,6 +423,7 @@ If `run_summary.md` is missing for an older or incomplete run, `research-xm summ
 `usage.json` aggregates:
 
 - total Xiaomi calls and calls by phase
+- prompt normalizer calls when the model-based normalizer is needed
 - Xiaomi prompt, completion, and total tokens
 - OpenCode calls, websearch calls, webfetch calls, and token totals when present in OpenCode events
 - OpenCode attempts, retries, failures, and last error when present
@@ -518,6 +551,7 @@ OpenCode is the default search adapter for real web runs, but it is deliberately
 - `Missing XIAOMI_MIMO_API_KEY`: set the environment variable or add `.env`.
 - `HTTP 401`: check the API key.
 - `Malformed JSON`: retry the run; the model may have returned invalid structured output.
+- `prompt_preflight_failed`: inspect `normalized_request.json` and add explicit `# Research Topic` and `# Research Objective` headings. This guardrail prevents wasting large token budgets on malformed plans.
 - Missing annotations: some Xiaomi responses may not include web annotations. The finding is preserved and source count may be lower.
 - First real OpenCode run: use `smoke5 --max-tasks 1 --opencode-timeout-ms 60000`. Use `normal100` only after the smoke path works. `deep500` intentionally makes more calls.
 - `pnpm` not found: enable Corepack with `corepack enable`, then run `corepack prepare pnpm@10.12.1 --activate`.

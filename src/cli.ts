@@ -38,6 +38,8 @@ export function createProgram(): Command {
   .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
   .option("--max-tasks <n>", "cap researcher tasks after planning")
   .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
+  .option("--prompt-normalize", "run prompt preflight normalization before planning", true)
+  .option("--no-prompt-normalize", "skip prompt preflight normalization")
   .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
   .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
   .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -62,6 +64,7 @@ export function createProgram(): Command {
         maxOutputTokens: options.maxOutputTokens as string | undefined,
         maxTasks: options.maxTasks as string | undefined,
         quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
+        promptNormalize: options.promptNormalize as boolean | undefined,
         opencodeTimeoutMs: options.opencodeTimeoutMs as string | undefined,
         opencodeRetries: options.opencodeRetries as string | undefined,
         xiaomiTimeoutMs: options.xiaomiTimeoutMs as string | undefined,
@@ -198,6 +201,8 @@ export function createProgram(): Command {
     .option("--max-output-tokens <number>", "writer max completion tokens; other roles are capped by their defaults")
     .option("--max-tasks <n>", "cap researcher tasks after planning")
     .option("--quota-mode <conservative|normal|aggressive>", "quota warning profile", "normal")
+    .option("--prompt-normalize", "run prompt preflight normalization before planning", true)
+    .option("--no-prompt-normalize", "skip prompt preflight normalization")
     .option("--opencode-timeout-ms <ms>", "OpenCode subprocess timeout in milliseconds", "180000")
     .option("--opencode-retries <n>", "OpenCode transient failure retries, from 0 to 5", "2")
     .option("--xiaomi-timeout-ms <ms>", "Xiaomi role call timeout in milliseconds", "120000")
@@ -347,6 +352,7 @@ export async function printFollowUpCommand(
     maxOutputTokens: options.maxOutputTokens,
     maxTasks: options.maxTasks,
     quotaMode: options.quotaMode as "conservative" | "normal" | "aggressive" | undefined,
+    promptNormalize: options.promptNormalize,
     opencodeTimeoutMs: options.opencodeTimeoutMs,
     opencodeRetries: options.opencodeRetries,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs,
@@ -406,6 +412,7 @@ type FollowUpCommandOptions = {
   maxOutputTokens?: string;
   maxTasks?: string;
   quotaMode?: string;
+  promptNormalize?: boolean;
   opencodeTimeoutMs?: string;
   opencodeRetries?: string;
   xiaomiTimeoutMs?: string;

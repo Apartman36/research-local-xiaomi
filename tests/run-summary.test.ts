@@ -18,6 +18,7 @@ describe("run summary", () => {
     expect(markdown).toContain("# Research Run Summary");
     expect(markdown).toContain("- Run ID:");
     expect(markdown).toContain("- Report: ./report.md");
+    expect(markdown).toContain("- Normalized request: ./normalized_request.md");
     expect(markdown).toContain("- Citation lint: ok");
     expect(markdown).toContain("- Report review readyForUse: false");
     expect(markdown).toContain("- Report review readinessScore: -1 / weak");
@@ -118,6 +119,17 @@ describe("run summary", () => {
     expect(markdown).toContain("- Direct Xiaomi tokens: 150");
   });
 
+  it("summarizes old runs without normalized request artifacts", async () => {
+    const runDir = await fixtureRunDir();
+    await writeCompleteArtifacts(runDir, { normalizedRequest: false });
+
+    const result = await generateRunSummary(runDir);
+    const markdown = await readFile(result.path, "utf8");
+
+    expect(markdown).toContain("- Normalized request: missing");
+    expect(markdown).toContain("- Usage: ./usage.json");
+  });
+
   it("returns the expected summary path", async () => {
     const runDir = await fixtureRunDir();
     expect(getRunSummaryPath(runDir)).toBe(path.join(runDir, "run_summary.md"));
@@ -167,6 +179,7 @@ async function writeCompleteArtifacts(
     parseFallback?: boolean;
     validationWarning?: string;
     tokenAccounting?: boolean;
+    normalizedRequest?: boolean;
   } = {}
 ): Promise<void> {
   const config = {
@@ -270,6 +283,9 @@ async function writeCompleteArtifacts(
   await writeFile(path.join(runDir, "sources.json"), JSON.stringify(sources), "utf8");
   await writeFile(path.join(runDir, "evidence.json"), JSON.stringify({ rawAnnotationCount: 3 }), "utf8");
   await writeFile(path.join(runDir, "report.md"), "# Report\n\nClaim [1].\n", "utf8");
+  if (options.normalizedRequest !== false) {
+    await writeFile(path.join(runDir, "normalized_request.md"), "# Normalized Research Request\n", "utf8");
+  }
   await writeFile(path.join(runDir, "events.jsonl"), "{\"type\":\"citation_lint_completed\",\"ok\":true,\"sourcesUsed\":1}\n", "utf8");
   if (options.reportReview !== false) {
     const persistedReview = options.legacyQualityScore

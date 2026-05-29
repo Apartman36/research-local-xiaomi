@@ -5,6 +5,13 @@ import { dedupeSources } from "./evidence/dedupe-sources.js";
 import { citationIndexBySourceId, sourceIdByCanonicalUrl } from "./evidence/source-ids.js";
 import { runCritic } from "./agents/critic.js";
 import { runPlanner } from "./agents/planner.js";
+import {
+  PromptPreflightError,
+  renderNormalizedRequestMarkdown,
+  runPromptNormalizer,
+  validateNormalizedRequest,
+  validatePlanPreflight
+} from "./agents/prompt-normalizer.js";
 import { renderReportReviewMarkdown, runReportReviewer } from "./agents/report-reviewer.js";
 import { runResearchTask } from "./agents/researcher.js";
 import { runWriter } from "./agents/writer.js";
@@ -16,7 +23,7 @@ import { generateRunSummary, getRunSummaryPath } from "./store/run-summary.js";
 import { readRunState, RunStateTracker } from "./store/run-state.js";
 import { createRunDirectory, writeFinding, writeJsonArtifact, writeTextArtifact } from "./store/run-store.js";
 import { UsageTracker } from "./store/usage.js";
-import type { CitationLintResult, Critique, EvidenceClaim, EvidenceFile, Finding, Plan, ReportReview, RunConfig, RunStage, SearchTask, Source, UsageSummary } from "./types.js";
+import type { CitationLintResult, Critique, EvidenceClaim, EvidenceFile, Finding, NormalizedResearchRequest, Plan, ReportReview, RunConfig, RunStage, SearchTask, Source, UsageSummary } from "./types.js";
 
 export type RunResult = {
   runId: string;
@@ -53,6 +60,29 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     await writeTextArtifact(config.runDir, "input.md", config.prompt);
     await writeJsonArtifact(config.runDir, "config.json", sanitizeConfig(config));
 
+    let normalizedRequest: NormalizedResearchRequest | undefined;
+    if (config.promptNormalize) {
+      await events.log("prompt_normalizer_started");
+      const normalizerResult = await runPromptNormalizer({
+        apiKey,
+        baseUrl: config.apiBaseUrl,
+        model: config.roleModels.promptNormalizer,
+        maxCompletionTokens: config.maxOutputTokens.promptNormalizer,
+        timeoutMs: config.xiaomiTimeoutMs,
+        prompt: config.prompt,
+        dryRun: config.dryRun
+      });
+      if (normalizerResult.usedModel || normalizerResult.usage) {
+        usage.addCall("promptNormalizer", normalizerResult.usage);
+      }
+      normalizedRequest = normalizerResult.normalized;
+      await writeJsonArtifact(config.runDir, "normalized_request.json", normalizedRequest);
+      await writeTextArtifact(config.runDir, "normalized_request.md", renderNormalizedRequestMarkdown(normalizedRequest));
+      const request = normalizedRequest;
+      await validatePromptPreflight(events, request, () => validateNormalizedRequest(request));
+      await events.log("prompt_normalizer_completed", promptPreflightMetadata(normalizedRequest));
+    }
+
     await state.start("planner");
     await events.log("planner_started");
     const plannerResult = await runPlanner({
@@ -64,6 +94,7 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
       prompt: config.prompt,
       profile: config.profile,
       focus: config.focus,
+      normalizedRequest,
       dryRun: config.dryRun
     });
     usage.addCall("planner", plannerResult.usage);
@@ -73,6 +104,9 @@ export async function runResearch(config: RunConfig, apiKey: string): Promise<Ru
     }
     for (const coercion of plannerResult.coercions ?? []) {
       await events.log("planner_focus_coerced", coercion);
+    }
+    if (normalizedRequest) {
+      await validatePromptPreflight(events, normalizedRequest, () => validatePlanPreflight(plannerResult.plan));
     }
     const plannedTaskCount = plannerResult.plan.searchTasks.length;
     if (config.maxTasks && plannerResult.plan.searchTasks.length > config.maxTasks) {
@@ -428,7 +462,24 @@ async function loadResumableConfig(runDir: string, options: ResumeOptions): Prom
     prompt,
     runDir,
     outputDirRoot: path.dirname(runDir),
+    roleModels: {
+      promptNormalizer: persisted.roleModels?.promptNormalizer ?? persisted.roleModels?.planner ?? persisted.model,
+      planner: persisted.roleModels?.planner ?? persisted.model,
+      researcher: persisted.roleModels?.researcher ?? persisted.model,
+      critic: persisted.roleModels?.critic ?? persisted.model,
+      writer: persisted.roleModels?.writer ?? persisted.model,
+      reportReviewer: persisted.roleModels?.reportReviewer ?? persisted.model
+    },
+    maxOutputTokens: {
+      promptNormalizer: persisted.maxOutputTokens?.promptNormalizer ?? persisted.maxOutputTokens?.planner ?? 2000,
+      planner: persisted.maxOutputTokens?.planner ?? 4000,
+      researcher: persisted.maxOutputTokens?.researcher ?? 6000,
+      critic: persisted.maxOutputTokens?.critic ?? 4000,
+      writer: persisted.maxOutputTokens?.writer ?? 16000,
+      reportReviewer: persisted.maxOutputTokens?.reportReviewer ?? 4000
+    },
     quotaMode: persisted.quotaMode ?? "normal",
+    promptNormalize: persisted.promptNormalize ?? true,
     notify: options.notify ?? persisted.notify,
     verbose: options.verbose ?? persisted.verbose,
     xiaomiTimeoutMs: options.xiaomiTimeoutMs ?? persisted.xiaomiTimeoutMs,
@@ -640,6 +691,33 @@ async function logCriticParseFallback(
   }
   await events.log("critic_parse_failed", { error: criticResult.parseError ?? "Critic response could not be parsed." });
   await events.log("critic_fallback_used");
+}
+
+async function validatePromptPreflight(
+  events: EventLogger,
+  request: NormalizedResearchRequest,
+  validate: () => void
+): Promise<void> {
+  try {
+    validate();
+  } catch (error) {
+    const details = error instanceof PromptPreflightError ? error.details : {};
+    await events.log("prompt_preflight_failed", {
+      ...promptPreflightMetadata(request),
+      ...details,
+      error: safeError(error)
+    });
+    throw error;
+  }
+}
+
+function promptPreflightMetadata(request: NormalizedResearchRequest): Record<string, unknown> {
+  return {
+    confidence: request.confidence,
+    topicLength: request.researchTopic.length,
+    mustCoverCount: request.mustCover.length,
+    warningCount: request.warnings.length
+  };
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {

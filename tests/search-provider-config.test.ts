@@ -16,6 +16,7 @@ describe("search provider config", () => {
     expect(config.opencodeModel).toBe("xiaomi-token-plan-sgp/mimo-v2.5-pro");
     expect(config.opencodeRetries).toBe(2);
     expect(config.quotaMode).toBe("normal");
+    expect(config.promptNormalize).toBe(true);
   });
 
   it.each(["normal", "conservative", "aggressive"] as const)("accepts quota mode %s", async (quotaMode) => {
@@ -110,6 +111,18 @@ describe("search provider config", () => {
 
     expect(config.researcherMode).toBe("mechanical");
     expect(config.notify).toBe(true);
+  });
+
+  it("persists prompt normalization setting", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "research-xm-"));
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "Research prompt", "utf8");
+
+    const enabled = await buildRunConfig({ file: promptPath, promptNormalize: true });
+    const disabled = await buildRunConfig({ file: promptPath, promptNormalize: false });
+
+    expect(enabled.promptNormalize).toBe(true);
+    expect(disabled.promptNormalize).toBe(false);
   });
 
   it("rejects invalid researcher mode", async () => {

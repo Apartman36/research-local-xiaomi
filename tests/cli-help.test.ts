@@ -9,6 +9,7 @@ describe("CLI help", () => {
     expect(runCommand?.helpInformation()).toContain("--xiaomi-timeout-ms <ms>");
     expect(runCommand?.helpInformation()).toContain("--writer-timeout-ms <ms>");
     expect(runCommand?.helpInformation()).toContain("--quota-mode <conservative|normal|aggressive>");
+    expect(runCommand?.helpInformation()).toContain("--no-prompt-normalize");
   });
 
   it("documents the safe follow-up prompt command", () => {

@@ -33,6 +33,7 @@ const runOptionsSchema = z.object({
   maxOutputTokens: z.coerce.number().int().positive().optional(),
   maxTasks: z.coerce.number().int().positive().optional(),
   quotaMode: z.enum(["conservative", "normal", "aggressive"]).default("normal"),
+  promptNormalize: z.boolean().default(true),
   opencodeTimeoutMs: z.coerce.number().int().positive().default(180_000),
   opencodeRetries: z.coerce.number().int().min(0).max(5).default(2),
   xiaomiTimeoutMs: z.coerce.number().int().min(1000).max(600_000).default(120_000),
@@ -71,6 +72,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
   const runId = createRunId();
   const outputDirRoot = path.resolve(parsed.outputDir);
   const roleTokens: RoleTokenLimits = {
+    promptNormalizer: 2000,
     planner: 4000,
     researcher: 6000,
     critic: 4000,
@@ -78,6 +80,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     reportReviewer: 4000
   };
   if (parsed.maxOutputTokens) {
+    roleTokens.promptNormalizer = Math.min(parsed.maxOutputTokens, roleTokens.promptNormalizer);
     roleTokens.planner = Math.min(parsed.maxOutputTokens, roleTokens.planner);
     roleTokens.researcher = Math.min(parsed.maxOutputTokens, roleTokens.researcher);
     roleTokens.critic = Math.min(parsed.maxOutputTokens, roleTokens.critic);
@@ -100,6 +103,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     xiaomiTimeoutMs: parsed.xiaomiTimeoutMs,
     writerTimeoutMs: parsed.writerTimeoutMs,
     roleModels: {
+      promptNormalizer: parsed.model,
       planner: parsed.model,
       researcher: parsed.model,
       critic: parsed.model,
@@ -110,6 +114,7 @@ export async function buildRunConfig(options: BuildRunConfigOptions): Promise<Ru
     concurrency: Math.min(parsed.concurrency, profile.maxConcurrentSearches),
     maxTasks: parsed.maxTasks,
     quotaMode: parsed.quotaMode as QuotaMode,
+    promptNormalize: parsed.promptNormalize,
     researcherMode: parsed.researcherMode as ResearcherMode,
     reviewReport: parsed.reviewReport,
     notify: parsed.notify,

@@ -59,6 +59,9 @@ export class UsageTracker {
     this.summary.totalCalls += 1;
     this.summary.xiaomi.calls += 1;
     this.summary.callsByPhase[phase] = (this.summary.callsByPhase[phase] ?? 0) + 1;
+    if (phase === "promptNormalizer") {
+      this.summary.promptNormalizerCalls = (this.summary.promptNormalizerCalls ?? 0) + 1;
+    }
     if (!usage) {
       return;
     }

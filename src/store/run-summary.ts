@@ -6,6 +6,7 @@ import { writeTextArtifact } from "./run-store.js";
 
 const ARTIFACTS = [
   "report.md",
+  "normalized_request.md",
   "report_review.md",
   "sources.json",
   "evidence.json",
@@ -159,6 +160,7 @@ function renderRunSummary(context: RunSummaryContext): string {
     "",
     `- Xiaomi calls: ${value(usage?.xiaomi.calls ?? usage?.totalCalls)}`,
     `- Planner calls: ${phaseCalls(usage, "planner")}`,
+    `- Prompt normalizer calls: ${phaseCalls(usage, "promptNormalizer")}`,
     `- Researcher calls: ${phaseCalls(usage, "researcher")}`,
     `- Critic calls: ${phaseCalls(usage, "critic")}`,
     `- Writer calls: ${phaseCalls(usage, "writer")}`,
@@ -284,6 +286,7 @@ function domainFromUrl(url: string): string | undefined {
 function artifactLabel(artifact: string): string {
   const labels: Record<string, string> = {
     "report.md": "Report",
+    "normalized_request.md": "Normalized request",
     "report_review.md": "Report review",
     "sources.json": "Sources",
     "evidence.json": "Evidence",

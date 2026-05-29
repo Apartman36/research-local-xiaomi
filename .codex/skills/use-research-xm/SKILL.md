@@ -47,6 +47,19 @@ If `.codex/skills/use-research-xm/SKILL.md` or `docs/COMMANDS_REFERENCE.md` is m
 
 Treat `input/` as ignored scratch for one-off local prompts. Keep reusable prompt fixtures in committed `prompts/`.
 
+Prefer long research prompts with explicit headings:
+
+```text
+# Research Topic
+# Research Objective
+# Must Cover
+# Constraints
+# Output Requirements
+# Original Prompt
+```
+
+`research-xm run` performs prompt preflight normalization by default and writes `normalized_request.json` plus `normalized_request.md`. This prevents role/context templates from being planned as `Role:` or `Context:`. If `prompt_preflight_failed` appears, inspect `normalized_request.json` and add clearer topic/objective headings. Use `--no-prompt-normalize` only to reproduce old planner behavior.
+
 Do not confuse these:
 
 - Context7 gives current docs for libraries.
@@ -103,11 +116,12 @@ corepack pnpm research-xm run `
 Read in this order:
 
 1. run_summary.md
-2. report_review.md
-3. report.md
-4. critique.json
-5. sources.json / evidence.json only if deeper diagnosis is needed
-6. events.jsonl / usage.json only if debugging
+2. normalized_request.md
+3. report_review.md
+4. report.md
+5. critique.json
+6. sources.json / evidence.json only if deeper diagnosis is needed
+7. events.jsonl / usage.json only if debugging
 
 Reviewer readiness uses `readinessScore`: -2 harmful, -1 weak, 0 mixed, 1 useful, 2 strong. Invalid values are normalized conservatively to -1 / weak and preserve diagnostics. If parsing falls back, inspect `report_review_raw.txt`.
 

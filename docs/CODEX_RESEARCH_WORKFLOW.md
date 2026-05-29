@@ -46,6 +46,7 @@ Codex should not run `research-xm`:
 3. Decide whether external research is needed.
 4. If research is needed:
    - Create a targeted prompt in `prompts/dev-research/<short-topic>.md`.
+   - Prefer explicit headings: `# Research Topic`, `# Research Objective`, `# Must Cover`, `# Constraints`, `# Output Requirements`, and `# Original Prompt`.
    - Run `research-xm` with a bounded profile.
    - Inspect `run_summary.md` first.
    - Inspect `report_review.md` second.
@@ -119,6 +120,14 @@ corepack pnpm research-xm resume 2026-05-28T09-13-54-582Z-xm `
 
 Use Context7 MCP for current library/API documentation and examples when changing code against external packages. Context7 is not a replacement for `research-xm`: it answers library documentation questions, while `research-xm` produces sourced research artifacts and follow-up recommendations.
 
+## Prompt Preflight
+
+`research-xm run` normalizes prompts before planning by default. It writes `normalized_request.json` and `normalized_request.md`, then gives the planner the original prompt plus the normalized topic, objective, must-cover list, constraints, and output requirements.
+
+This protects long role/context templates from becoming malformed plans where `Role:` or `Context:` is treated as the research topic. If the preflight cannot extract a concrete topic/objective or catches placeholder planner output such as `research angle 1`, the run stops before OpenCode search and records `prompt_preflight_failed`.
+
+Use `--no-prompt-normalize` only when intentionally reproducing old planner behavior.
+
 ## Recommended Run Sizes
 
 Smoke or quick:
@@ -176,10 +185,11 @@ Do not run full `deep500` without `--max-tasks` until a chunked or section write
 Read generated files in this order:
 
 1. `runs/<runId>/run_summary.md` gives the fastest view of coverage, errors, reviewer quality, retries, and next actions.
-2. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
-3. `runs/<runId>/report.md` contains the full research result.
-4. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
-5. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, and partial failures.
+2. `runs/<runId>/normalized_request.md` shows what the planner actually received as the topic/objective.
+3. `runs/<runId>/report_review.md` says whether the report is ready for use and what gaps remain.
+4. `runs/<runId>/report.md` contains the full research result.
+5. `runs/<runId>/state.json` shows the current stage, completed stages, failed stage, and whether resume is supported.
+6. `runs/<runId>/usage.json` and `runs/<runId>/events.jsonl` are for debugging provider calls, retries, tokens, preflight failures, and partial failures.
 
 For new runs, `usage.json` includes `tokenAccounting`. Treat direct Xiaomi tokens as the usage visible to `research-xm`; OpenCode subprocess token usage may be unavailable and estimated. Estimated totals are lower-bound operational guidance, not billing truth, and the Xiaomi dashboard may show more usage than direct `usage.json` totals.
 

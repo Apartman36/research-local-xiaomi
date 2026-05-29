@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { chat, extractUsage } from "../providers/xiaomi.js";
-import type { Plan, ResearchFocus, ResearchProfile, SearchTask, XiaomiUsage } from "../types.js";
+import type { NormalizedResearchRequest, Plan, ResearchFocus, ResearchProfile, SearchTask, XiaomiUsage } from "../types.js";
 import { extractJsonObject, getAssistantContent } from "./json.js";
 
 const searchTaskSchema = z.object({
@@ -51,11 +51,12 @@ export async function runPlanner(params: {
   prompt: string;
   profile: ResearchProfile;
   focus: ResearchFocus;
+  normalizedRequest?: NormalizedResearchRequest;
   dryRun: boolean;
   timeoutMs?: number;
 }): Promise<PlannerResult> {
   if (params.dryRun) {
-    return { plan: fallbackPlan(params.prompt, params.profile, params.focus, "Dry-run mode did not call Xiaomi.") };
+    return { plan: fallbackPlan(params.prompt, params.profile, params.focus, "Dry-run mode did not call Xiaomi.", params.normalizedRequest) };
   }
 
   const system = await readFile(path.resolve("src/prompts/planner.md"), "utf8");
@@ -76,6 +77,18 @@ export async function runPlanner(params: {
         content: JSON.stringify(
           {
             prompt: params.prompt,
+            normalizedResearchRequest: params.normalizedRequest
+              ? {
+                  researchTopic: params.normalizedRequest.researchTopic,
+                  researchObjective: params.normalizedRequest.researchObjective,
+                  userContext: params.normalizedRequest.userContext,
+                  mustCover: params.normalizedRequest.mustCover,
+                  constraints: params.normalizedRequest.constraints,
+                  outputRequirements: params.normalizedRequest.outputRequirements,
+                  negativeRequirements: params.normalizedRequest.negativeRequirements,
+                  confidence: params.normalizedRequest.confidence
+                }
+              : undefined,
             profile: params.profile,
             focus: params.focus,
             desiredSearchTaskCount: desiredTaskCount
@@ -89,14 +102,15 @@ export async function runPlanner(params: {
   const parsed = parsePlanContent(getAssistantContent(response), {
     prompt: params.prompt,
     profile: params.profile,
-    focus: params.focus
+    focus: params.focus,
+    normalizedRequest: params.normalizedRequest
   });
   return { ...parsed, usage: extractUsage(response) };
 }
 
 export function parsePlanContent(
   content: string,
-  params: { prompt: string; profile: ResearchProfile; focus: ResearchFocus }
+  params: { prompt: string; profile: ResearchProfile; focus: ResearchFocus; normalizedRequest?: NormalizedResearchRequest }
 ): PlannerResult {
   try {
     const rawPlan = planSchema.parse(extractJsonObject(content));
@@ -132,7 +146,13 @@ export function parsePlanContent(
     };
   } catch (error) {
     return {
-      plan: fallbackPlan(params.prompt, params.profile, params.focus, "Planner returned malformed JSON; deterministic fallback plan was used."),
+      plan: fallbackPlan(
+        params.prompt,
+        params.profile,
+        params.focus,
+        "Planner returned malformed JSON; deterministic fallback plan was used.",
+        params.normalizedRequest
+      ),
       parseFailed: true,
       parseError: safeParseError(error),
       fallbackUsed: true,
@@ -141,11 +161,19 @@ export function parsePlanContent(
   }
 }
 
-export function fallbackPlan(prompt: string, profile: ResearchProfile, focus: ResearchFocus, assumption?: string): Plan {
-  const topic = prompt.split(/\r?\n/).find((line) => line.trim())?.replace(/^#+\s*/, "").slice(0, 120) || "Research task";
+export function fallbackPlan(
+  prompt: string,
+  profile: ResearchProfile,
+  focus: ResearchFocus,
+  assumption?: string,
+  normalizedRequest?: NormalizedResearchRequest
+): Plan {
+  const topic = normalizedRequest?.researchTopic || prompt.split(/\r?\n/).find((line) => line.trim())?.replace(/^#+\s*/, "").slice(0, 120) || "Research task";
+  const objective = normalizedRequest?.researchObjective || "Answer the user's research prompt with sourced evidence.";
+  const templates = fallbackQuestionTemplates(topic, objective, normalizedRequest?.mustCover ?? []);
   const subquestions = Array.from({ length: profile.initialSubquestions }, (_, index) => ({
     id: `SQ${String(index + 1).padStart(3, "0")}`,
-    question: `${topic}: research angle ${index + 1}`,
+    question: templates[index % templates.length] ?? `What evidence is needed for ${topic}?`,
     rationale: "Dry-run fallback subquestion."
   }));
   const searchTasks = subquestions.map((subquestion, index) => ({
@@ -158,11 +186,21 @@ export function fallbackPlan(prompt: string, profile: ResearchProfile, focus: Re
   }));
   return {
     topic,
-    objective: "Answer the user's research prompt with sourced evidence.",
+    objective,
     assumptions: [assumption ?? "Fallback planner generated deterministic tasks."],
     subquestions,
     searchTasks
   };
+}
+
+function fallbackQuestionTemplates(topic: string, objective: string, mustCover: string[]): string[] {
+  const coverage = mustCover.slice(0, 5).join(", ");
+  return [
+    `What concrete decisions are required to satisfy the objective for ${topic}?`,
+    coverage ? `What evidence is needed about ${coverage} for ${topic}?` : `What evidence best supports the plan for ${topic}?`,
+    `What constraints, risks, and tradeoffs affect ${topic}?`,
+    `What implementation roadmap follows from the objective: ${objective}?`
+  ];
 }
 
 function clampDepth(depth: number, maxDepth: number): number {

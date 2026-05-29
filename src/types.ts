@@ -1,7 +1,7 @@
 export type ResearchFocus = "web" | "github";
 export type ResearchProfileName = "smoke5" | "normal100" | "deep500";
 export type Confidence = "low" | "medium" | "high";
-export type Phase = "planner" | "researcher" | "critic" | "writer" | "reportReviewer" | "smoke";
+export type Phase = "promptNormalizer" | "planner" | "researcher" | "critic" | "writer" | "reportReviewer" | "smoke";
 export type SearchProviderName = "opencode-web" | "xiaomi-native";
 export type ResearcherMode = "extract" | "mechanical";
 export type QuotaMode = "conservative" | "normal" | "aggressive";
@@ -31,6 +31,7 @@ export type ResearchProfile = {
 };
 
 export type RoleModels = {
+  promptNormalizer: string;
   planner: string;
   researcher: string;
   critic: string;
@@ -39,6 +40,7 @@ export type RoleModels = {
 };
 
 export type RoleTokenLimits = {
+  promptNormalizer: number;
   planner: number;
   researcher: number;
   critic: number;
@@ -66,6 +68,7 @@ export type RunConfig = {
   concurrency: number;
   maxTasks?: number;
   quotaMode: QuotaMode;
+  promptNormalize: boolean;
   researcherMode: ResearcherMode;
   reviewReport: boolean;
   notify: boolean;
@@ -78,6 +81,21 @@ export type RunConfig = {
   gapsAddressed?: string[];
   followUpPromptPath?: string;
   isFollowUpRun?: boolean;
+};
+
+export type NormalizedResearchRequest = {
+  schemaVersion: 1;
+  researchTopic: string;
+  researchObjective: string;
+  userContext: string;
+  constraints: string[];
+  mustCover: string[];
+  outputRequirements: string[];
+  negativeRequirements: string[];
+  detectedPromptSections: string[];
+  confidence: Confidence;
+  warnings: string[];
+  rawInputSha256: string;
 };
 
 export type RunState = {
@@ -260,6 +278,7 @@ export type TokenAccounting = {
 
 export type UsageSummary = {
   totalCalls: number;
+  promptNormalizerCalls?: number;
   callsByPhase: Record<string, number>;
   prompt_tokens: number;
   completion_tokens: number;
